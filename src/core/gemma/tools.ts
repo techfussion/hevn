@@ -133,6 +133,10 @@ export const taskTools: FunctionDeclaration[] = [
               title: { type: Type.STRING },
               due_at_iso: { type: Type.STRING, description: "ISO 8601 due date/time for this subtask" },
               priority: { type: Type.STRING, enum: ["low", "medium", "high"] },
+              reminder_offset_minutes: {
+                type: Type.NUMBER,
+                description: "Minutes before this subtask's due date to send a reminder. Omit to default to 60.",
+              },
             },
             required: ["title", "due_at_iso", "priority"],
           },

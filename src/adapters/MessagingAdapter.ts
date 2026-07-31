@@ -37,6 +37,8 @@ export interface MessagingAdapter {
     params: Record<string, string>
   ): Promise<void>;
 
+  sendTypingIndicator?(platformUserId: string): Promise<void>;
+
   /**
    * Verify that an incoming webhook request actually came from the
    * platform (signature/secret check). MUST be called before processing

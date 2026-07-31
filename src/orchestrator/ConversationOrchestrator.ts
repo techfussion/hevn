@@ -7,7 +7,7 @@ import type { ConversationTurn, User } from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
 
-const MAX_HISTORY_TURNS = 12; // cap context; prevents unbounded token growth and cost
+const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
 
 export class ConversationOrchestrator {
   constructor(
@@ -165,6 +165,7 @@ export class ConversationOrchestrator {
               title: s.title,
               dueAtIso: s.due_at_iso,
               priority: s.priority,
+              reminderOffsetMinutes: s.reminder_offset_minutes,
             })),
           });
           return {

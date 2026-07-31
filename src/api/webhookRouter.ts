@@ -48,6 +48,7 @@ export function buildWebhookRouter(
     try {
       const incoming = adapter.parseIncomingWebhook(req.body);
       if (!incoming) return; // not a text message we care about (receipt, sticker, etc.)
+      await adapter.sendTypingIndicator?.(incoming.platformUserId);
 
       const user = await userService.getOrCreate(adapter.platformName, incoming.platformUserId);
       const reply = await orchestrator.handleMessage(user, incoming.text);

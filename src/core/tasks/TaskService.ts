@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { withUserScope } from "../../db/pool";
+import { withUserScope, getPool, getSchedulerPool } from "../../db/pool";
 import type { Task, TaskPriority, TaskStatus } from "../../types/domain";
 
 /**
@@ -14,11 +14,16 @@ const isoDateTime = z
   .refine((val) => !isNaN(Date.parse(val)), { message: "Invalid datetime" })
   .transform((val) => new Date(val).toISOString());
 
+const reminderOffsetField = z.preprocess(
+  (val) => (typeof val === "number" ? Math.abs(Math.trunc(val)) : val),
+  z.number().int().min(0).max(60 * 24 * 14).nullable().optional()
+);
+
 const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
   dueAtIso: isoDateTime,
   priority: z.enum(["low", "medium", "high"]),
-  reminderOffsetMinutes: z.number().int().min(0).max(60 * 24 * 14).nullable().optional(),
+  reminderOffsetMinutes: reminderOffsetField,
 });
 
 const breakdownSchema = z.object({
@@ -28,6 +33,7 @@ const breakdownSchema = z.object({
         title: z.string().min(1).max(200),
         dueAtIso: isoDateTime,
         priority: z.enum(["low", "medium", "high"]),
+        reminderOffsetMinutes: reminderOffsetField,
       })
     )
     .min(1)
@@ -43,7 +49,7 @@ export class TaskService {
         `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [userId, parsed.title, parsed.dueAtIso, parsed.priority, parsed.reminderOffsetMinutes ?? null]
+        [userId, parsed.title, parsed.dueAtIso, parsed.priority, parsed.reminderOffsetMinutes ?? 60]
       );
       return mapRow(rows[0]);
     });
@@ -145,11 +151,9 @@ export class TaskService {
   }
 
   async getDueRemindersBatch(limit = 100): Promise<Task[]> {
-    // Scheduler-only query, deliberately not user-scoped since it operates
-    // across all users. Runs as a privileged internal job, never exposed
-    // to a user-facing endpoint.
-    const { getPool } = await import("../../db/pool");
-    const { rows } = await getPool().query(
+    // Deliberately uses the scheduler's BYPASSRLS pool — this is the one
+    // legitimate cross-user query n the apip. See db/pool.ts comment.
+    const { rows } = await getSchedulerPool().query(
       `SELECT * FROM tasks
        WHERE status IN ('pending', 'in_progress')
          AND reminder_sent_at IS NULL
@@ -163,8 +167,7 @@ export class TaskService {
   }
 
   async markReminderSent(taskId: string): Promise<void> {
-    const { getPool } = await import("../../db/pool");
-    await getPool().query(`UPDATE tasks SET reminder_sent_at = now() WHERE id = $1`, [taskId]);
+    await getSchedulerPool().query(`UPDATE tasks SET reminder_sent_at = now() WHERE id = $1`, [taskId]);
   }
 
   async createTaskBreakdown(userId: string, input: unknown): Promise<Task[]> {
@@ -173,11 +176,11 @@ export class TaskService {
     return withUserScope(userId, async (client) => {
       const created: Task[] = [];
       for (const sub of parsed.subtasks) {
-        const { rows } = await client.query(
-          `INSERT INTO tasks (user_id, title, due_at, priority)
-           VALUES ($1, $2, $3, $4)
+const { rows } = await client.query(
+          `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes)
+           VALUES ($1, $2, $3, $4, $5)
            RETURNING *`,
-          [userId, sub.title, sub.dueAtIso, sub.priority]
+          [userId, sub.title, sub.dueAtIso, sub.priority, sub.reminderOffsetMinutes ?? 60]
         );
         created.push(mapRow(rows[0]));
       }

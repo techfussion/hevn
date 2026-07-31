@@ -21,17 +21,25 @@ export class TelegramAdapter implements MessagingAdapter {
 
   async sendMessage(message: OutboundMessage): Promise<void> {
     const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: message.userId,
-        text: message.text,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Telegram sendMessage failed (${res.status}): ${body}`);
+    const maxRetries = 2;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: message.userId, text: message.text }),
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Telegram sendMessage failed (${res.status}): ${body}`);
+        }
+        return; // success
+      } catch (err) {
+        if (attempt === maxRetries) throw err;
+        console.warn(`Telegram sendMessage network error, retrying (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      }
     }
   }
 
@@ -49,6 +57,18 @@ export class TelegramAdapter implements MessagingAdapter {
       userId: platformUserId,
       text: `[${templateName}] ${rendered}`,
     });
+  }
+
+  async sendTypingIndicator(platformUserId: string): Promise<void> {
+    try {
+      await fetch(`https://api.telegram.org/bot${this.botToken}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: platformUserId, action: "typing" }),
+      });
+    } catch {
+      // best-effort only — never let a failed typing indicator break the real reply
+    }
   }
 
   verifyWebhookSignature(_rawBody: string, headers: Record<string, string | undefined>): boolean {

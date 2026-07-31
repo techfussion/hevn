@@ -43,6 +43,7 @@ async function main() {
   const app = express();
   app.use(helmet());
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
 
   app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
 
