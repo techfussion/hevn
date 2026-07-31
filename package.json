@@ -1,0 +1,46 @@
+{
+  "name": "hevn",
+  "version": "0.1.0",
+  "description": "Conversational academic secretary bot powered by Gemma 4",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "worker": "tsx watch src/scheduler/worker.ts",
+    "test:gemma": "tsx scripts/test-gemma.ts",
+    "test:tools": "tsx scripts/test-all-tools.ts",
+    "chat": "tsx scripts/chat-cli.ts",
+    "webhook:setup": "bash scripts/setup-telegram-webhook.sh",
+    "seed": "tsx scripts/seed-demo-data.ts",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@google/genai": "^0.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "pg": "^8.12.0",
+    "pino": "^9.3.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.13",
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "@types/pg": "^8.11.6",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "tsx": "^4.16.5",
+    "typescript": "^5.5.4"
+  }
+}
