@@ -11,7 +11,7 @@ export function getPool(): Pool {
     }
     pool = new Pool({
       connectionString,
-      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: true } : undefined,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
       max: 10,
     });
     pool.on("error", (err) => {
@@ -37,7 +37,7 @@ export function getSchedulerPool(): Pool {
     }
     schedulerPool = new Pool({
       connectionString,
-      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: true } : undefined,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
       max: 5,
     });
     schedulerPool.on("error", (err) => {
