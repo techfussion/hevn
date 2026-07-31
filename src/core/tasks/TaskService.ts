@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { withUserScope, getPool, getSchedulerPool } from "../../db/pool";
+import { withUserScope, getSchedulerPool } from "../../db/pool";
 import type { Task, TaskPriority, TaskStatus } from "../../types/domain";
 
 /**

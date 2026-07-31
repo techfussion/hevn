@@ -3,7 +3,6 @@ import cron from "node-cron";
 import pino from "pino";
 
 import { TaskService } from "../core/tasks/TaskService";
-import { UserService } from "../core/tasks/UserService";
 import { TelegramAdapter } from "../adapters/telegram/TelegramAdapter";
 import { getPool } from "../db/pool";
 import "./dailyCheckIns"; // registers its own cron schedule on import
@@ -20,7 +19,6 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
  */
 
 const taskService = new TaskService();
-const userService = new UserService();
 
 const telegramAdapter = new TelegramAdapter(
   process.env.TELEGRAM_BOT_TOKEN ?? "",
