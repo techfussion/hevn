@@ -5,9 +5,10 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "worker": "tsx watch src/scheduler/worker.ts",
+    "start": "tsx dist/index.ts",
+    "start:worker": "tsx dist/scheduler/worker.ts",
     "test:gemma": "tsx scripts/test-gemma.ts",
     "test:tools": "tsx scripts/test-all-tools.ts",
     "chat": "tsx scripts/chat-cli.ts",
