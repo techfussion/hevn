@@ -57,8 +57,15 @@ async function tick() {
 
         await taskService.markReminderSent(task.id);
       } catch (err) {
-        logger.error({ err, taskId: task.id }, "Failed to send reminder for task");
-        // Don't mark as sent — will retry next tick.
+        const isPermanentFailure =
+          err instanceof Error && /Telegram sendMessage failed \(4\d\d\)/.test(err.message);
+
+        if (isPermanentFailure) {
+          logger.error({ err, taskId: task.id }, "Permanent failure sending reminder — giving up, not retrying");
+          await taskService.markReminderSent(task.id);
+        } else {
+          logger.error({ err, taskId: task.id }, "Transient failure sending reminder — will retry next tick");
+        }
       }
     }
   } catch (err) {
