@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from "pg";
+import { logger } from "../utils/logger";
 
 let pool: Pool | null = null;
 let schedulerPool: Pool | null = null;
@@ -15,7 +16,7 @@ export function getPool(): Pool {
       max: 10,
     });
     pool.on("error", (err) => {
-      console.error("Unexpected PG pool error (connection recovered automatically):", err.message);
+      logger.error({ err }, "Unexpected PG pool error (connection recovered automatically)");
     });
   }
   return pool;
@@ -31,9 +32,9 @@ export function getPool(): Pool {
  */
 export function getSchedulerPool(): Pool {
   if (!schedulerPool) {
-    const connectionString = process.env.SCHEDULER_DATABASE_URL;
+    const connectionString = process.env.SCHEDULER_DATABASE_URL || process.env.DATABASE_URL;
     if (!connectionString) {
-      throw new Error("SCHEDULER_DATABASE_URL is missing from environment.");
+      throw new Error("DATABASE_URL or SCHEDULER_DATABASE_URL is missing from environment.");
     }
     schedulerPool = new Pool({
       connectionString,
@@ -41,7 +42,7 @@ export function getSchedulerPool(): Pool {
       max: 5,
     });
     schedulerPool.on("error", (err) => {
-      console.error("Unexpected scheduler PG pool error:", err.message);
+      logger.error({ err }, "Unexpected scheduler PG pool error");
     });
   }
   return schedulerPool;
@@ -59,7 +60,7 @@ export async function withUserScope<T>(
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     const client = await getPool().connect();
-    const errorHandler = (err: Error) => console.error("DB client error (handled):", err.message);
+    const errorHandler = (err: Error) => logger.error({ err }, "DB client error (handled)");
     client.on("error", errorHandler);
 
     try {
@@ -71,7 +72,7 @@ export async function withUserScope<T>(
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       if (attempt === 0 && isRetryable(err)) {
-        console.warn("Transient DB connection error, retrying once...");
+        logger.warn("Transient DB connection error, retrying once...");
         continue;
       }
       throw err;

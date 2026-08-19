@@ -6,6 +6,7 @@ import { withUserScope } from "../db/pool";
 import type { ConversationTurn, User } from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
+import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
 
@@ -14,8 +15,7 @@ export class ConversationOrchestrator {
     private gemma: GemmaClient,
     private taskService: TaskService,
     private userService: UserService,
-    private insightsService: InsightsService,
-    // private botName: string
+    private insightsService: InsightsService
   ) {}
 
   /**
@@ -23,23 +23,26 @@ export class ConversationOrchestrator {
    * to send back. Handles tool-call execution and persists conversation
    * history + task changes.
    */
-  async handleMessage(user: User, rawText: string): Promise<string> {
+  async handleMessage(user: User, rawText: string, correlationId?: string): Promise<string> {
     try {
-      return await this.handleMessageInner(user, rawText);
+      return await this.handleMessageInner(user, rawText, correlationId);
     } catch (err) {
-      console.error("handleMessage failed, returning graceful fallback:", err);
+      logger.error({ err, correlationId, userId: user.id }, "handleMessage failed, returning graceful fallback");
       return "Sorry, I hit a snag on my end just now — mind trying that again?";
     }
   }
 
-  private async handleMessageInner(user: User, rawText: string): Promise<string> {
+  private async handleMessageInner(user: User, rawText: string, correlationId?: string): Promise<string> {
     const text = rawText.trim().slice(0, 2000);
     if (text.length === 0) {
       return "I didn't catch that — could you send it again?";
     }
 
+    logger.debug({ correlationId, userId: user.id }, "Processing incoming message turn");
+
     const history = await this.getRecentHistory(user.id);
     const nowInUserTz = new Date().toLocaleString("sv-SE", { timeZone: user.timezone });
+
     const systemPrompt = buildSystemPrompt({
       botName: user.botPersona,
       studentName: user.displayName,
@@ -160,8 +163,11 @@ export class ConversationOrchestrator {
           };
         }
         case "create_task_breakdown": {
+          const subtaskItems = Array.isArray(call.args.subtasks)
+            ? (call.args.subtasks as Array<Record<string, unknown>>)
+            : [];
           const tasks = await this.taskService.createTaskBreakdown(userId, {
-            subtasks: (call.args.subtasks as unknown[])?.map((s: any) => ({
+            subtasks: subtaskItems.map((s) => ({
               title: s.title,
               dueAtIso: s.due_at_iso,
               priority: s.priority,
@@ -190,7 +196,7 @@ export class ConversationOrchestrator {
           return { summary: "I don't support that action yet.", data: { success: false, error: "unsupported_tool" } };
       }
     } catch (err) {
-      console.error("Tool execution error:", err);
+      logger.error({ err, tool: call.name, userId }, "Tool execution error");
       return { summary: "Something went wrong handling that.", data: { success: false, error: "internal_error" } };
     }
   }

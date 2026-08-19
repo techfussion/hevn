@@ -1,18 +1,18 @@
 import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
-import pino from "pino";
 
 import { GemmaClient } from "./core/gemma/GemmaClient";
 import { TaskService } from "./core/tasks/TaskService";
 import { UserService } from "./core/tasks/UserService";
 import { ConversationOrchestrator } from "./orchestrator/ConversationOrchestrator";
 import { TelegramAdapter } from "./adapters/telegram/TelegramAdapter";
+import { WhatsAppAdapter } from "./adapters/whatsapp/WhatsAppAdapter";
+import { registerAdapter } from "./adapters/registry";
 import { buildWebhookRouter } from "./api/webhookRouter";
 import { webhookRateLimiter } from "./middleware/rateLimiter";
 import { InsightsService } from "./core/insights/InsightsService";
-
-const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
+import { logger } from "./utils/logger";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -25,7 +25,7 @@ function requireEnv(name: string): string {
 async function main() {
   const gemma = new GemmaClient(
     requireEnv("GEMMA_API_KEY"),
-    process.env.GEMMA_MODEL ?? "gemma-4-27b-it"
+    process.env.GEMMA_MODEL ?? "gemma-4-31b-it"
   );
 
   const taskService = new TaskService();
@@ -39,13 +39,14 @@ async function main() {
     requireEnv("TELEGRAM_BOT_TOKEN"),
     requireEnv("TELEGRAM_WEBHOOK_SECRET")
   );
+  registerAdapter(telegramAdapter);
 
   const app = express();
   app.use(helmet());
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
 
-  app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+  app.get("/health", (_req, res) => res.status(200).json({ status: "ok", bot: botName }));
 
   app.use(
     "/webhook/telegram",
@@ -53,20 +54,41 @@ async function main() {
     buildWebhookRouter(telegramAdapter, orchestrator, userService)
   );
 
-  // WhatsApp router mounts the same way once WHATSAPP_* env vars are set:
-  //
-  // const whatsappAdapter = new WhatsAppAdapter(
-  //   requireEnv("WHATSAPP_ACCESS_TOKEN"),
-  //   requireEnv("WHATSAPP_PHONE_NUMBER_ID"),
-  //   requireEnv("WHATSAPP_APP_SECRET"),
-  //   requireEnv("WHATSAPP_VERIFY_TOKEN")
-  // );
-  // app.get("/webhook/whatsapp", (req, res) => { ... verifySubscription handshake ... });
-  // app.use("/webhook/whatsapp", webhookRateLimiter, buildWebhookRouter(whatsappAdapter, orchestrator, userService));
+  if (
+    process.env.WHATSAPP_ACCESS_TOKEN &&
+    process.env.WHATSAPP_PHONE_NUMBER_ID &&
+    process.env.WHATSAPP_APP_SECRET
+  ) {
+    const whatsappAdapter = new WhatsAppAdapter(
+      process.env.WHATSAPP_ACCESS_TOKEN,
+      process.env.WHATSAPP_PHONE_NUMBER_ID,
+      process.env.WHATSAPP_APP_SECRET,
+      process.env.WHATSAPP_VERIFY_TOKEN ?? ""
+    );
+    registerAdapter(whatsappAdapter);
+
+    app.get("/webhook/whatsapp", (req, res) => {
+      const mode = req.query["hub.mode"] as string;
+      const token = req.query["hub.verify_token"] as string;
+      const challenge = req.query["hub.challenge"] as string;
+
+      if (whatsappAdapter.verifySubscription(mode, token)) {
+        res.status(200).send(challenge);
+      } else {
+        res.sendStatus(403);
+      }
+    });
+
+    app.use(
+      "/webhook/whatsapp",
+      webhookRateLimiter,
+      buildWebhookRouter(whatsappAdapter, orchestrator, userService)
+    );
+  }
 
   const port = Number(process.env.PORT ?? 3000);
   app.listen(port, () => {
-    logger.info(`Academic PA (${botName}) listening on port ${port}`);
+    logger.info(`Academic Secretary (${botName}) listening on port ${port}`);
   });
 }
 
@@ -74,3 +96,4 @@ main().catch((err) => {
   logger.error(err, "Fatal startup error");
   process.exit(1);
 });
+

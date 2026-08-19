@@ -10,6 +10,7 @@ export interface GemmaResponse {
   text: string | null;
   toolCalls: ToolCall[];
   rawContent: Content | null; // needed to continue the conversation after tool execution
+  latencyMs?: number;
 }
 
 export interface ToolResult {
@@ -86,6 +87,7 @@ export class GemmaClient {
   ): Promise<GemmaResponse> {
     const maxRetries = 3;
     let lastError: unknown;
+    const startTime = Date.now();
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -99,6 +101,7 @@ export class GemmaClient {
           },
         });
 
+        const latencyMs = Date.now() - startTime;
         const candidate = result.candidates?.[0];
         const parts = candidate?.content?.parts ?? [];
         const textParts = parts
@@ -115,6 +118,7 @@ export class GemmaClient {
           text: textParts.length > 0 ? textParts.join("\n") : null,
           toolCalls,
           rawContent: candidate?.content ?? null,
+          latencyMs,
         };
       } catch (err: unknown) {
         lastError = err;
@@ -134,15 +138,38 @@ export { Type };
 
 /**
  * Extracts only the text after "REPLY:" — discards any chain-of-thought
- * the model wrote before it. If the marker is missing (model didn't
- * follow instructions), returns null so the caller can fall back to a
- * safe generic message rather than leaking raw reasoning to the user.
+ * the model wrote before it. If the marker is missing:
+ * - Checks for obvious reasoning/thought patterns to avoid leaking CoT.
+ * - If clean conversational text, returns it safely.
  */
 export function extractReply(rawText: string | null): string | null {
   if (!rawText) return null;
   const marker = "REPLY:";
   const idx = rawText.lastIndexOf(marker);
-  if (idx === -1) return null;
-  const reply = rawText.slice(idx + marker.length).trim();
-  return reply.length > 0 ? reply : null;
+  if (idx !== -1) {
+    const reply = rawText.slice(idx + marker.length).trim();
+    return reply.length > 0 ? reply : null;
+  }
+
+  // Fallback heuristic: check if raw text looks like leaked internal reasoning
+  const lower = rawText.toLowerCase();
+  const reasoningIndicators = [
+    "i need to",
+    "i will call",
+    "i should call",
+    "calling tool",
+    "the user wants",
+    "plan:",
+    "thinking:",
+    "reasoning:",
+    "thought:",
+  ];
+
+  const hasReasoningLeak = reasoningIndicators.some((ind) => lower.includes(ind));
+  if (hasReasoningLeak) {
+    return null; // drop to safe fallback rather than leaking internal reasoning
+  }
+
+  const cleaned = rawText.trim();
+  return cleaned.length > 0 ? cleaned : null;
 }

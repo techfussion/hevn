@@ -4,12 +4,15 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- for gen_random_uuid()
 
 CREATE TABLE IF NOT EXISTS users (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  platform          TEXT NOT NULL CHECK (platform IN ('telegram', 'whatsapp')),
-  platform_user_id  TEXT NOT NULL,
-  display_name      TEXT,
-  timezone          TEXT NOT NULL DEFAULT 'UTC',
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  platform               TEXT NOT NULL CHECK (platform IN ('telegram', 'whatsapp')),
+  platform_user_id       TEXT NOT NULL,
+  display_name           TEXT,
+  timezone               TEXT NOT NULL DEFAULT 'UTC',
+  onboarded              BOOLEAN NOT NULL DEFAULT false,
+  bot_persona            TEXT NOT NULL DEFAULT 'Hevn',
+  preferred_checkin_hour INTEGER NOT NULL DEFAULT 8 CHECK (preferred_checkin_hour BETWEEN 0 AND 23),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (platform, platform_user_id)
 );
 
@@ -47,6 +50,16 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
 CREATE INDEX IF NOT EXISTS idx_conversation_user_time
   ON conversation_turns (user_id, created_at DESC);
 
+-- Webhook deduplication table to ensure idempotency against network retries
+CREATE TABLE IF NOT EXISTS processed_updates (
+  id          TEXT PRIMARY KEY, -- e.g. 'telegram:123456' or 'whatsapp:wamid.HBgL...'
+  platform    TEXT NOT NULL CHECK (platform IN ('telegram', 'whatsapp')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_processed_updates_created_at
+  ON processed_updates (created_at);
+
 -- Auto-update updated_at on tasks
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -66,11 +79,19 @@ CREATE TRIGGER trg_tasks_updated_at
 -- The app connects as a role that must set app.current_user_id per request
 -- (see src/db/pool.ts). This is a safety net, not the primary access control
 -- — the primary control is that TaskService always scopes queries by user_id.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_turns ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS users_isolation ON users;
+CREATE POLICY users_isolation ON users
+  USING (id = current_setting('app.current_user_id', true)::uuid);
+
+DROP POLICY IF EXISTS tasks_isolation ON tasks;
 CREATE POLICY tasks_isolation ON tasks
   USING (user_id = current_setting('app.current_user_id', true)::uuid);
 
+DROP POLICY IF EXISTS conversation_isolation ON conversation_turns;
 CREATE POLICY conversation_isolation ON conversation_turns
   USING (user_id = current_setting('app.current_user_id', true)::uuid);
+

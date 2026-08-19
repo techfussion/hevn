@@ -157,7 +157,7 @@ export const taskTools: FunctionDeclaration[] = [
         timezone: { type: Type.STRING, description: "IANA timezone, e.g. Africa/Lagos, America/New_York" },
         bot_persona: {
           type: Type.STRING,
-          enum: ["Theo", "Kai", "Milo", "Nash", "Vera", "Nadia", "Lena", "Iris"],
+          enum: ["Raj", "Hamid", "Wali", "Khadija", "Iris", "Lena"],
         },
       },
       required: ["display_name", "timezone", "bot_persona"],

@@ -12,6 +12,7 @@ export interface IncomingMessage {
   platformUserId: string;
   text: string;
   timestamp: string;
+  updateId?: string;
 }
 
 export interface MessagingAdapter {

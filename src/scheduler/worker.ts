@@ -1,13 +1,11 @@
 import "dotenv/config";
 import cron from "node-cron";
-import pino from "pino";
 
 import { TaskService } from "../core/tasks/TaskService";
-import { TelegramAdapter } from "../adapters/telegram/TelegramAdapter";
+import { getAdapter, initDefaultAdapters } from "../adapters/registry";
 import { getPool } from "../db/pool";
+import { logger } from "../utils/logger";
 import "./dailyCheckIns"; // registers its own cron schedule on import
-
-const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
 /**
  * Polls for due reminders every minute and sends them. Deliberately a
@@ -18,19 +16,15 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
  * Run with: npm run worker
  */
 
+initDefaultAdapters();
 const taskService = new TaskService();
-
-const telegramAdapter = new TelegramAdapter(
-  process.env.TELEGRAM_BOT_TOKEN ?? "",
-  process.env.TELEGRAM_WEBHOOK_SECRET ?? ""
-);
 
 async function tick() {
   try {
     const dueTasks = await taskService.getDueRemindersBatch(100);
     if (dueTasks.length === 0) return;
 
-    logger.info(`Processing ${dueTasks.length} due reminder(s)`);
+    logger.info({ count: dueTasks.length }, `Processing due reminder(s)`);
 
     for (const task of dueTasks) {
       try {
@@ -45,20 +39,21 @@ async function tick() {
         const dueTime = new Date(task.dueAt).toLocaleString();
         const messageText = `Reminder: "${task.title}" is due at ${dueTime}. Reply "done" once you've handled it, or "snooze 30" to push it back.`;
 
-        if (user.platform === "telegram") {
-          await telegramAdapter.sendMessage({
-            userId: user.platform_user_id,
-            text: messageText,
-          });
+        const adapter = getAdapter(user.platform as "telegram" | "whatsapp");
+        if (!adapter) {
+          logger.warn({ platform: user.platform, taskId: task.id }, "No adapter registered for platform");
+          continue;
         }
-        // WhatsApp branch: once the adapter is wired up, business-initiated
-        // reminders outside the 24h window MUST use sendTemplate with a
-        // Meta-approved template, not sendMessage. See MessagingAdapter.ts.
+
+        await adapter.sendMessage({
+          userId: user.platform_user_id,
+          text: messageText,
+        });
 
         await taskService.markReminderSent(task.id);
       } catch (err) {
         const isPermanentFailure =
-          err instanceof Error && /Telegram sendMessage failed \(4\d\d\)/.test(err.message);
+          err instanceof Error && /failed \((4\d\d)\)/i.test(err.message);
 
         if (isPermanentFailure) {
           logger.error({ err, taskId: task.id }, "Permanent failure sending reminder — giving up, not retrying");
@@ -78,3 +73,4 @@ async function tick() {
 cron.schedule("* * * * *", tick);
 
 logger.info("Reminder scheduler worker started (checking every minute)");
+

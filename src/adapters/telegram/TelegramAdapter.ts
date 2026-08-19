@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import type { MessagingAdapter, IncomingMessage } from "../MessagingAdapter";
 import type { OutboundMessage } from "../../types/domain";
+import { logger } from "../../utils/logger";
 
 /**
  * Telegram adapter. Telegram has no 24h-session restriction, so
@@ -37,7 +38,7 @@ export class TelegramAdapter implements MessagingAdapter {
         return; // success
       } catch (err) {
         if (attempt === maxRetries) throw err;
-        console.warn(`Telegram sendMessage network error, retrying (attempt ${attempt + 1}/${maxRetries})...`);
+        logger.warn({ err, attempt: attempt + 1, maxRetries }, "Telegram sendMessage network error, retrying");
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
     }
@@ -85,7 +86,8 @@ export class TelegramAdapter implements MessagingAdapter {
 
   parseIncomingWebhook(payload: unknown): IncomingMessage | null {
     const body = payload as {
-      message?: { chat?: { id?: number }; text?: string; date?: number };
+      update_id?: number;
+      message?: { message_id?: number; chat?: { id?: number }; text?: string; date?: number };
     };
 
     const msg = body.message;
@@ -93,10 +95,13 @@ export class TelegramAdapter implements MessagingAdapter {
       return null; // not a plain text message (could be a sticker, edit, etc.)
     }
 
+    const updateId = body.update_id ? String(body.update_id) : (msg.message_id ? String(msg.message_id) : undefined);
+
     return {
       platformUserId: String(msg.chat.id),
       text: msg.text,
       timestamp: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
+      updateId,
     };
   }
 }

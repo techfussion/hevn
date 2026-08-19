@@ -67,6 +67,21 @@ export class UserService {
       ]);
     });
   }
+  async tryAcquireUpdate(updateId: string, platform: "telegram" | "whatsapp"): Promise<boolean> {
+    const pool = getPool();
+    try {
+      const res = await pool.query(
+        `INSERT INTO processed_updates (id, platform) VALUES ($1, $2)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [updateId, platform]
+      );
+      return (res.rowCount ?? 0) > 0;
+    } catch {
+      // Fallback: if table is missing or DB blips, permit processing rather than dropping
+      return true;
+    }
+  }
 }
 
 function mapRow(row: Record<string, unknown>): User {
@@ -75,10 +90,13 @@ function mapRow(row: Record<string, unknown>): User {
     platform: row.platform as "telegram" | "whatsapp",
     platformUserId: row.platform_user_id as string,
     displayName: (row.display_name as string | null) ?? null,
-    timezone: row.timezone as string,
-    onboarded: row.onboarded as boolean,
-    botPersona: row.bot_persona as string,
-    preferredCheckinHour: row.preferred_checkin_hour as number,
-    createdAt: (row.created_at as Date).toISOString(),
+    timezone: (row.timezone as string) ?? DEFAULT_TIMEZONE,
+    onboarded: Boolean(row.onboarded),
+    botPersona: (row.bot_persona as string) || "Hevn",
+    preferredCheckinHour: typeof row.preferred_checkin_hour === "number" ? row.preferred_checkin_hour : 8,
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : new Date(String(row.created_at ?? Date.now())).toISOString(),
   };
 }

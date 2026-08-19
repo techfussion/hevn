@@ -114,7 +114,9 @@ export class WhatsAppAdapter implements MessagingAdapter {
       }>;
     };
 
-    const message = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const message = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0] as
+      | { from?: string; text?: { body?: string }; timestamp?: string; id?: string }
+      | undefined;
     if (!message?.from || !message.text?.body) return null;
 
     return {
@@ -123,6 +125,7 @@ export class WhatsAppAdapter implements MessagingAdapter {
       timestamp: message.timestamp
         ? new Date(Number(message.timestamp) * 1000).toISOString()
         : new Date().toISOString(),
+      updateId: message.id,
     };
   }
 }

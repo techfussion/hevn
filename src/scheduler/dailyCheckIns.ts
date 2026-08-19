@@ -1,33 +1,20 @@
 import cron from "node-cron";
-import pino from "pino";
 
 import { TaskService } from "../core/tasks/TaskService";
-import { TelegramAdapter } from "../adapters/telegram/TelegramAdapter";
+import { getAdapter, initDefaultAdapters } from "../adapters/registry";
 import { getPool } from "../db/pool";
+import { logger } from "../utils/logger";
 
-const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
+initDefaultAdapters();
 const taskService = new TaskService();
-
-const telegramAdapter = new TelegramAdapter(
-  process.env.TELEGRAM_BOT_TOKEN ?? "",
-  process.env.TELEGRAM_WEBHOOK_SECRET ?? ""
-);
-
 const botName = process.env.BOT_NAME ?? "Hevn";
 
 /**
- * IMPORTANT — WhatsApp caveat: these proactive, bot-initiated messages
- * only work as free-form sendMessage on WhatsApp if the user messaged
- * within the last 24h. For a reliable daily agenda on WhatsApp outside
- * that window, this MUST go through a Meta-approved message template
- * (sendTemplate), which requires template approval ahead of time.
- * Telegram has no such restriction — these run as-is.
- *
+ * Proactive, localized daily agenda and evening check-ins.
  * Runs hourly and checks each user's LOCAL time so "8am agenda" fires
  * at 8am in the user's own timezone, not server time.
  */
 
-// const MORNING_HOUR = 8;
 const EVENING_HOUR = 20;
 
 async function sendDailyAgenda() {
@@ -39,7 +26,7 @@ async function sendDailyAgenda() {
     const localHour = Number(
       new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: u.timezone }).format(new Date())
     );
-    return localHour === u.preferred_checkin_hour;
+    return localHour === (u.preferred_checkin_hour ?? 8);
   });
 
   for (const user of dueNow) {
@@ -49,14 +36,11 @@ async function sendDailyAgenda() {
     if (todayTasks.length === 0) continue; // don't message if nothing's due — avoid noise
 
     const lines = todayTasks
-      .map((t) => `• ${t.title} — ${new Date(t.dueAt).toLocaleTimeString()}`)
+      .map((t) => `• ${t.title} — ${new Date(t.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)
       .join("\n");
 
     const text = `Good morning! Here's what ${botName} has on your plate today:\n${lines}`;
-
-    if (user.platform === "telegram") {
-      await sendSafely(user.platform_user_id, text);
-    }
+    await sendSafely(user.platform as "telegram" | "whatsapp", user.platform_user_id, text);
   }
 }
 
@@ -71,26 +55,26 @@ async function sendEveningCheckIn() {
     if (dueTodayOrPast.length === 0) continue;
 
     const text = `Quick check-in — how did today go? You've still got ${dueTodayOrPast.length} task(s) open. Reply "done [task]" or let me know if anything should move to tomorrow.`;
-
-    if (user.platform === "telegram") {
-      await sendSafely(user.platform_user_id, text);
-    }
+    await sendSafely(user.platform as "telegram" | "whatsapp", user.platform_user_id, text);
   }
 }
 
-async function sendSafely(platformUserId: string, text: string) {
+async function sendSafely(platform: "telegram" | "whatsapp", platformUserId: string, text: string) {
   try {
-    await telegramAdapter.sendMessage({ userId: platformUserId, text });
+    const adapter = getAdapter(platform);
+    if (!adapter) {
+      logger.warn({ platform, platformUserId }, "No adapter registered for scheduled check-in");
+      return;
+    }
+    await adapter.sendMessage({ userId: platformUserId, text });
   } catch (err) {
-    logger.error({ err, platformUserId }, "Failed to send scheduled check-in");
+    logger.error({ err, platform, platformUserId }, "Failed to send scheduled check-in");
   }
 }
 
 async function getUsersAtLocalHour(
   hour: number
 ): Promise<Array<{ id: string; platform: string; platform_user_id: string; timezone: string }>> {
-  // Fetch all users, filter in-app by local hour.
-  // for real scale, we'll need to precompute a UTC send-time per user instead.
   const { rows } = await getPool().query(`SELECT id, platform, platform_user_id, timezone FROM users`);
   return rows.filter((u) => {
     const localHour = Number(
@@ -115,3 +99,4 @@ cron.schedule("0 * * * *", () => {
 });
 
 logger.info("Daily check-in scheduler started (hourly local-time sweep)");
+
