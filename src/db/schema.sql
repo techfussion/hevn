@@ -10,8 +10,13 @@ CREATE TABLE IF NOT EXISTS users (
   display_name           TEXT,
   timezone               TEXT NOT NULL DEFAULT 'UTC',
   onboarded              BOOLEAN NOT NULL DEFAULT false,
-  bot_persona            TEXT NOT NULL DEFAULT 'Hevn',
-  preferred_checkin_hour INTEGER NOT NULL DEFAULT 8 CHECK (preferred_checkin_hour BETWEEN 0 AND 23),
+  onboarding_state       TEXT NOT NULL DEFAULT 'WELCOME' CHECK (onboarding_state IN ('WELCOME', 'AWAITING_NAME', 'AWAITING_ASSISTANT_NAME', 'AWAITING_PERSONA', 'AWAITING_CHECKIN_TIME', 'COMPLETED')),
+  assistant_name         TEXT NOT NULL DEFAULT 'Hevn',
+  bot_persona            TEXT NOT NULL DEFAULT 'Hevn', -- alias for backwards compatibility
+  persona                TEXT NOT NULL DEFAULT 'professional' CHECK (persona IN ('student', 'executive_assistant', 'professional')),
+  preferred_checkin_time TEXT NOT NULL DEFAULT '06:00',
+  preferred_checkin_hour INTEGER NOT NULL DEFAULT 6 CHECK (preferred_checkin_hour BETWEEN 0 AND 23),
+  plan                   TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro')),
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (platform, platform_user_id)
 );
@@ -23,6 +28,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   due_at                   TIMESTAMPTZ NOT NULL,
   priority                 TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
   status                   TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in_progress','done','missed')),
+  task_type                TEXT NOT NULL DEFAULT 'task' CHECK (task_type IN ('task', 'commitment', 'reminder', 'recurring_checkin')),
+  is_system_generated      BOOLEAN NOT NULL DEFAULT false,
   reminder_offset_minutes  INTEGER,
   reminder_sent_at         TIMESTAMPTZ,
   created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -35,6 +42,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_due_pending
   WHERE status IN ('pending', 'in_progress') AND reminder_sent_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks (user_id, task_type);
+
 
 -- Short rolling conversation buffer for context (last N turns per user).
 -- Deliberately NOT a full transcript store — capped and prunable, since

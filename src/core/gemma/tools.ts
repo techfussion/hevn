@@ -15,13 +15,13 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "create_task",
     description:
-      "Create a new task, assignment, exam, or event for the student. Call this " +
+      "Create a new task, commitment, meeting, assignment, exam, or event. Call this " +
       "as soon as you have a clear title and due date/time from the conversation, " +
-      "even if the reminder timing hasn't been decided yet.",
+      "even if reminder timing hasn't been decided yet.",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        title: { type: Type.STRING, description: "Short, clear task title" },
+        title: { type: Type.STRING, description: "Short, clear title of the task or commitment" },
         due_at_iso: {
           type: Type.STRING,
           description:
@@ -46,7 +46,7 @@ export const taskTools: FunctionDeclaration[] = [
   },
   {
     name: "update_task",
-    description: "Update an existing task's title, due date, priority, or reminder timing.",
+    description: "Update an existing task or commitment's title, due date, priority, or reminder timing.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -61,7 +61,7 @@ export const taskTools: FunctionDeclaration[] = [
   },
   {
     name: "mark_task_status",
-    description: "Mark a task as done, in progress, or reset to pending.",
+    description: "Mark a task or commitment as done, in progress, or reset to pending.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -73,7 +73,7 @@ export const taskTools: FunctionDeclaration[] = [
   },
   {
     name: "snooze_task",
-    description: "Push a task's reminder back by a relative amount of time.",
+    description: "Push a task or reminder back by a relative amount of time.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -89,8 +89,8 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "get_upcoming_tasks",
     description:
-      "Fetch the student's upcoming tasks. Use this whenever you need context to " +
-      "answer questions like 'what's due soon' or before suggesting what to work on next.",
+      "Fetch the user's upcoming tasks and commitments. Use this whenever you need context to " +
+      "answer questions like 'what do I have to do this week' or before updating/completing tasks.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -102,8 +102,8 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "get_weekly_report",
     description:
-      "Get the student's productivity summary for the past 7 days — completion rate, " +
-      "missed tasks, best day, and suggestions. Call this when the student asks how " +
+      "Get the user's productivity summary for the past 7 days — completion rate, " +
+      "missed tasks, best day, and suggestions. Call this when the user asks how " +
       "they're doing, for a weekly report, or similar progress questions.",
     parameters: {
       type: Type.OBJECT,
@@ -114,13 +114,10 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "create_task_breakdown",
     description:
-      "Break a larger academic goal (research project, exam prep, thesis chapter) into " +
-      "several smaller tasks with staggered due dates, when the student describes something " +
+      "Break a larger goal (project, presentation, thesis, product launch, exam prep) into " +
+      "several smaller tasks with staggered due dates, when the user describes something " +
       "spanning multiple weeks or clearly needing more than one step. Decide a sensible " +
-      "breakdown yourself — e.g. research/draft/review/submit for a project, or " +
-      "reading/practice/revision/mock-exam for exam prep — with due dates spread between " +
-      "now and the final deadline. Call this once with the full list rather than calling " +
-      "create_task repeatedly.",
+      "breakdown yourself with due dates spread between now and the final deadline.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -148,8 +145,8 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "complete_registration",
     description:
-      "Call this ONCE you have collected the student's name, IANA timezone, and chosen " +
-      "persona name during onboarding. Must only be called during first-contact onboarding.",
+      "Call this ONCE you have collected the user's name, IANA timezone, and chosen " +
+      "assistant name during onboarding.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -157,7 +154,11 @@ export const taskTools: FunctionDeclaration[] = [
         timezone: { type: Type.STRING, description: "IANA timezone, e.g. Africa/Lagos, America/New_York" },
         bot_persona: {
           type: Type.STRING,
-          enum: ["Raj", "Hamid", "Wali", "Khadija", "Iris", "Lena"],
+          enum: ["Mumin", "Khadijah", "Scott", "Claire"],
+        },
+        persona: {
+          type: Type.STRING,
+          enum: ["student", "executive_assistant", "professional"],
         },
       },
       required: ["display_name", "timezone", "bot_persona"],
@@ -166,8 +167,8 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "set_checkin_time",
     description:
-      "Change what hour (0-23, in the student's local timezone) the daily morning " +
-      "check-in is sent. Call when the student wants to adjust their check-in time.",
+      "Change what hour (0-23, in the user's local timezone) the daily morning " +
+      "check-in is sent. Call when the user wants to adjust their check-in time.",
     parameters: {
       type: Type.OBJECT,
       properties: { hour: { type: Type.NUMBER } },

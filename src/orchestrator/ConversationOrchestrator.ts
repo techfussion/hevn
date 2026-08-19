@@ -6,22 +6,27 @@ import { withUserScope } from "../db/pool";
 import type { ConversationTurn, User } from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
+import { OnboardingService } from "../core/onboarding/OnboardingService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
 
 export class ConversationOrchestrator {
+  private onboardingService: OnboardingService;
+
   constructor(
     private gemma: GemmaClient,
     private taskService: TaskService,
     private userService: UserService,
     private insightsService: InsightsService
-  ) {}
+  ) {
+    this.onboardingService = new OnboardingService(this.userService, this.taskService);
+  }
 
   /**
    * Main entry point: takes a user's raw message, returns the reply text
-   * to send back. Handles tool-call execution and persists conversation
-   * history + task changes.
+   * to send back. Handles onboarding state machine routing, tool-call
+   * execution, and persists conversation history + task changes.
    */
   async handleMessage(user: User, rawText: string, correlationId?: string): Promise<string> {
     try {
@@ -40,15 +45,25 @@ export class ConversationOrchestrator {
 
     logger.debug({ correlationId, userId: user.id }, "Processing incoming message turn");
 
+    // Route un-onboarded users through deterministic conversational state machine
+    if (!user.onboarded || user.onboardingState !== "COMPLETED") {
+      const reply = await this.onboardingService.handleOnboardingMessage(user, text);
+      await this.persistTurn(user.id, "user", text);
+      await this.persistTurn(user.id, "assistant", reply);
+      return reply;
+    }
+
+    // Normal Hevn AI Secretary conversation loop
     const history = await this.getRecentHistory(user.id);
     const nowInUserTz = new Date().toLocaleString("sv-SE", { timeZone: user.timezone });
 
     const systemPrompt = buildSystemPrompt({
-      botName: user.botPersona,
+      botName: user.assistantName || user.botPersona || "Hevn",
       studentName: user.displayName,
+      persona: user.persona,
       currentIsoDateTime: nowInUserTz,
       timezone: user.timezone,
-      isOnboarded: user.onboarded,
+      isOnboarded: true,
     });
 
     const MAX_TOOL_ROUNDS = 3; // hard cap — prevents a runaway tool-calling loop from burning quota/cost
@@ -87,10 +102,7 @@ export class ConversationOrchestrator {
 
   /**
    * Executes a tool call for real. Returns both a human-readable summary
-   * (used only as a last-resort fallback if the follow-up model call
-   * fails) and structured data (fed back to the model as ground truth —
-   * this is what lets it reference real task IDs on later turns instead
-   * of inventing them).
+   * and structured data fed back to the model as ground truth.
    */
   private async executeTool(
     userId: string,
@@ -227,10 +239,7 @@ export class ConversationOrchestrator {
         [userId, role, content.slice(0, 4000)]
       );
 
-      // Prune old turns beyond a generous cap so the table doesn't grow
-      // unbounded (data minimization — see schema.sql comment). Runs on
-      // the SAME scoped client/transaction as the insert above, so RLS
-      // sees app.current_user_id set correctly for both statements.
+      // Prune old turns beyond cap
       await client.query(
         `DELETE FROM conversation_turns
          WHERE user_id = $1

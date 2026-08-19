@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { withUserScope, getSchedulerPool } from "../../db/pool";
-import type { Task, TaskPriority, TaskStatus } from "../../types/domain";
+import type { Task, TaskPriority, TaskStatus, TaskType } from "../../types/domain";
 
 /**
  * All task persistence logic. Every method requires userId and every
@@ -22,7 +22,9 @@ const reminderOffsetField = z.preprocess(
 const createTaskSchema = z.object({
   title: z.string().min(1).max(200),
   dueAtIso: isoDateTime,
-  priority: z.enum(["low", "medium", "high"]),
+  priority: z.enum(["low", "medium", "high"]).default("medium"),
+  taskType: z.enum(["task", "commitment", "reminder", "recurring_checkin"]).optional().default("task"),
+  isSystemGenerated: z.boolean().optional().default(false),
   reminderOffsetMinutes: reminderOffsetField,
 });
 
@@ -32,7 +34,7 @@ const breakdownSchema = z.object({
       z.object({
         title: z.string().min(1).max(200),
         dueAtIso: isoDateTime,
-        priority: z.enum(["low", "medium", "high"]),
+        priority: z.enum(["low", "medium", "high"]).default("medium"),
         reminderOffsetMinutes: reminderOffsetField,
       })
     )
@@ -42,14 +44,22 @@ const breakdownSchema = z.object({
 
 export class TaskService {
   async createTask(userId: string, input: unknown): Promise<Task> {
-    const parsed = createTaskSchema.parse(input); // throws on invalid model output — never trust Gemma's raw args
+    const parsed = createTaskSchema.parse(input); // throws on invalid model output
 
     return withUserScope(userId, async (client) => {
       const { rows } = await client.query(
-        `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes, task_type, is_system_generated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [userId, parsed.title, parsed.dueAtIso, parsed.priority, parsed.reminderOffsetMinutes ?? 60]
+        [
+          userId,
+          parsed.title,
+          parsed.dueAtIso,
+          parsed.priority,
+          parsed.reminderOffsetMinutes ?? 60,
+          parsed.taskType,
+          parsed.isSystemGenerated,
+        ]
       );
       return mapRow(rows[0]);
     });
@@ -62,6 +72,7 @@ export class TaskService {
       title: string;
       dueAtIso: string;
       priority: TaskPriority;
+      taskType: TaskType;
       reminderOffsetMinutes: number;
     }>
   ): Promise<Task | null> {
@@ -82,6 +93,10 @@ export class TaskService {
     if (patch.priority !== undefined) {
       fields.push(`priority = $${i++}`);
       values.push(patch.priority);
+    }
+    if (patch.taskType !== undefined) {
+      fields.push(`task_type = $${i++}`);
+      values.push(patch.taskType);
     }
     if (patch.reminderOffsetMinutes !== undefined) {
       fields.push(`reminder_offset_minutes = $${i++}`);
@@ -150,9 +165,44 @@ export class TaskService {
     });
   }
 
+  async ensureDailyCheckinTask(userId: string, checkinTimeStr: string): Promise<Task> {
+    // Calculates the next occurrence of checkinTimeStr (HH:MM)
+    const [hoursStr, minsStr] = checkinTimeStr.split(":");
+    const hours = parseInt(hoursStr || "6", 10);
+    const mins = parseInt(minsStr || "0", 10);
+
+    const now = new Date();
+    const nextDue = new Date(now);
+    nextDue.setUTCHours(hours, mins, 0, 0);
+    if (nextDue.getTime() <= now.getTime()) {
+      nextDue.setUTCDate(nextDue.getUTCDate() + 1);
+    }
+
+    return withUserScope(userId, async (client) => {
+      const existing = await client.query(
+        `SELECT * FROM tasks WHERE user_id = $1 AND task_type = 'recurring_checkin' LIMIT 1`,
+        [userId]
+      );
+
+      if (existing.rows[0]) {
+        const { rows } = await client.query(
+          `UPDATE tasks SET due_at = $1, reminder_sent_at = NULL WHERE id = $2 RETURNING *`,
+          [nextDue.toISOString(), existing.rows[0].id]
+        );
+        return mapRow(rows[0]);
+      }
+
+      const { rows } = await client.query(
+        `INSERT INTO tasks (user_id, title, due_at, priority, status, task_type, is_system_generated, reminder_offset_minutes)
+         VALUES ($1, 'Daily Check-in', $2, 'medium', 'pending', 'recurring_checkin', true, 0)
+         RETURNING *`,
+        [userId, nextDue.toISOString()]
+      );
+      return mapRow(rows[0]);
+    });
+  }
+
   async getDueRemindersBatch(limit = 100): Promise<Task[]> {
-    // Deliberately uses the scheduler's BYPASSRLS pool — this is the one
-    // legitimate cross-user query n the apip. See db/pool.ts comment.
     const { rows } = await getSchedulerPool().query(
       `SELECT * FROM tasks
        WHERE status IN ('pending', 'in_progress')
@@ -171,14 +221,14 @@ export class TaskService {
   }
 
   async createTaskBreakdown(userId: string, input: unknown): Promise<Task[]> {
-    const parsed = breakdownSchema.parse(input); // throws on malformed model output
+    const parsed = breakdownSchema.parse(input);
 
     return withUserScope(userId, async (client) => {
       const created: Task[] = [];
       for (const sub of parsed.subtasks) {
-const { rows } = await client.query(
-          `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes)
-           VALUES ($1, $2, $3, $4, $5)
+        const { rows } = await client.query(
+          `INSERT INTO tasks (user_id, title, due_at, priority, reminder_offset_minutes, task_type, is_system_generated)
+           VALUES ($1, $2, $3, $4, $5, 'task', false)
            RETURNING *`,
           [userId, sub.title, sub.dueAtIso, sub.priority, sub.reminderOffsetMinutes ?? 60]
         );
@@ -199,8 +249,10 @@ function mapRow(row: Record<string, unknown>): Task {
     userId: row.user_id as string,
     title: row.title as string,
     dueAt: (row.due_at as Date).toISOString(),
-    priority: row.priority as TaskPriority,
-    status: row.status as TaskStatus,
+    priority: (row.priority as TaskPriority) || "medium",
+    status: (row.status as TaskStatus) || "pending",
+    taskType: ((row.task_type as string) || "task") as TaskType,
+    isSystemGenerated: Boolean(row.is_system_generated),
     reminderOffsetMinutes: (row.reminder_offset_minutes as number | null) ?? null,
     reminderSentAt: row.reminder_sent_at ? (row.reminder_sent_at as Date).toISOString() : null,
     createdAt: (row.created_at as Date).toISOString(),

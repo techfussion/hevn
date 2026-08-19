@@ -1,5 +1,5 @@
 import { getPool, withUserScope } from "../../db/pool";
-import type { User } from "../../types/domain";
+import type { User, OnboardingState, UserPersona } from "../../types/domain";
 
 const DEFAULT_TIMEZONE = "UTC";
 
@@ -15,7 +15,9 @@ export class UserService {
 
     try {
       const inserted = await pool.query(
-        `INSERT INTO users (platform, platform_user_id, timezone) VALUES ($1, $2, $3) RETURNING *`,
+        `INSERT INTO users (platform, platform_user_id, timezone, onboarding_state, assistant_name, persona, preferred_checkin_time, preferred_checkin_hour, plan)
+         VALUES ($1, $2, $3, 'WELCOME', 'Hevn', 'professional', '06:00', 6, 'free')
+         RETURNING *`,
         [platform, platformUserId, DEFAULT_TIMEZONE]
       );
       return mapRow(inserted.rows[0]);
@@ -32,24 +34,69 @@ export class UserService {
     }
   }
 
+  async setOnboardingState(userId: string, state: OnboardingState): Promise<void> {
+    const isOnboarded = state === "COMPLETED";
+    await withUserScope(userId, async (client) => {
+      await client.query(
+        `UPDATE users SET onboarding_state = $1, onboarded = $2 WHERE id = $3`,
+        [state, isOnboarded, userId]
+      );
+    });
+  }
+
+  async setAssistantName(userId: string, assistantName: string): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      await client.query(
+        `UPDATE users SET assistant_name = $1, bot_persona = $1 WHERE id = $2`,
+        [assistantName, userId]
+      );
+    });
+  }
+
+  async setPersona(userId: string, persona: UserPersona): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      await client.query(
+        `UPDATE users SET persona = $1 WHERE id = $2`,
+        [persona, userId]
+      );
+    });
+  }
+
+  async setCheckinTime(userId: string, timeStr: string, hour: number): Promise<void> {
+    const clampedHour = Math.min(Math.max(Math.floor(hour), 0), 23);
+    await withUserScope(userId, async (client) => {
+      await client.query(
+        `UPDATE users SET preferred_checkin_time = $1, preferred_checkin_hour = $2 WHERE id = $3`,
+        [timeStr, clampedHour, userId]
+      );
+    });
+  }
+
   async completeRegistration(
     userId: string,
     displayName: string,
     timezone: string,
-    botPersona: string
+    botPersona: string,
+    persona: UserPersona = "professional"
   ): Promise<void> {
     await withUserScope(userId, async (client) => {
       await client.query(
-        `UPDATE users SET display_name = $1, timezone = $2, bot_persona = $3, onboarded = true WHERE id = $4`,
-        [displayName.slice(0, 100), timezone, botPersona, userId]
+        `UPDATE users
+         SET display_name = $1, timezone = $2, assistant_name = $3, bot_persona = $3, persona = $4, onboarded = true, onboarding_state = 'COMPLETED'
+         WHERE id = $5`,
+        [displayName.slice(0, 100), timezone, botPersona, persona, userId]
       );
     });
   }
 
   async setCheckinHour(userId: string, hour: number): Promise<void> {
     const clamped = Math.min(Math.max(Math.floor(hour), 0), 23);
+    const formatted = `${String(clamped).padStart(2, "0")}:00`;
     await withUserScope(userId, async (client) => {
-      await client.query(`UPDATE users SET preferred_checkin_hour = $1 WHERE id = $2`, [clamped, userId]);
+      await client.query(
+        `UPDATE users SET preferred_checkin_hour = $1, preferred_checkin_time = $2 WHERE id = $3`,
+        [clamped, formatted, userId]
+      );
     });
   }
 
@@ -67,6 +114,7 @@ export class UserService {
       ]);
     });
   }
+
   async tryAcquireUpdate(updateId: string, platform: "telegram" | "whatsapp"): Promise<boolean> {
     const pool = getPool();
     try {
@@ -85,15 +133,26 @@ export class UserService {
 }
 
 function mapRow(row: Record<string, unknown>): User {
+  const assistantName = (row.assistant_name as string) || (row.bot_persona as string) || "Hevn";
+  const preferredCheckinHour = typeof row.preferred_checkin_hour === "number" ? row.preferred_checkin_hour : 6;
+  const preferredCheckinTime = (row.preferred_checkin_time as string) || `${String(preferredCheckinHour).padStart(2, "0")}:00`;
+  const persona = ((row.persona as string) || "professional") as UserPersona;
+  const onboardingState = ((row.onboarding_state as string) || (row.onboarded ? "COMPLETED" : "WELCOME")) as OnboardingState;
+
   return {
     id: row.id as string,
     platform: row.platform as "telegram" | "whatsapp",
     platformUserId: row.platform_user_id as string,
     displayName: (row.display_name as string | null) ?? null,
     timezone: (row.timezone as string) ?? DEFAULT_TIMEZONE,
-    onboarded: Boolean(row.onboarded),
-    botPersona: (row.bot_persona as string) || "Hevn",
-    preferredCheckinHour: typeof row.preferred_checkin_hour === "number" ? row.preferred_checkin_hour : 8,
+    onboarded: Boolean(row.onboarded) || onboardingState === "COMPLETED",
+    onboardingState,
+    assistantName,
+    botPersona: assistantName,
+    persona,
+    preferredCheckinTime,
+    preferredCheckinHour,
+    plan: ((row.plan as string) || "free") as "free" | "pro",
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString()

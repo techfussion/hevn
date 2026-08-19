@@ -5,6 +5,18 @@
 
 export type TaskPriority = "low" | "medium" | "high";
 export type TaskStatus = "pending" | "in_progress" | "done" | "missed";
+export type TaskType = "task" | "commitment" | "reminder" | "recurring_checkin";
+
+export type OnboardingState =
+  | "WELCOME"
+  | "AWAITING_NAME"
+  | "AWAITING_ASSISTANT_NAME"
+  | "AWAITING_PERSONA"
+  | "AWAITING_CHECKIN_TIME"
+  | "COMPLETED";
+
+export type UserPersona = "student" | "executive_assistant" | "professional";
+export type AssistantName = "Mumin" | "Khadijah" | "Scott" | "Claire" | string;
 
 export interface Task {
   id: string;
@@ -13,6 +25,8 @@ export interface Task {
   dueAt: string; // ISO 8601, always stored in UTC
   priority: TaskPriority;
   status: TaskStatus;
+  taskType: TaskType;
+  isSystemGenerated: boolean;
   reminderOffsetMinutes: number | null; // null = no reminder requested
   reminderSentAt: string | null;
   createdAt: string;
@@ -26,8 +40,13 @@ export interface User {
   displayName: string | null;
   timezone: string; // IANA tz, e.g. "Africa/Lagos" — captured at onboarding
   onboarded: boolean;
-  botPersona: string;
-  preferredCheckinHour: number;
+  onboardingState: OnboardingState;
+  assistantName: string;
+  botPersona: string; // alias for assistantName
+  persona: UserPersona;
+  preferredCheckinTime: string; // e.g. "06:00", "07:30"
+  preferredCheckinHour: number; // 0..23
+  plan: "free" | "pro";
   createdAt: string;
 }
 
@@ -45,3 +64,4 @@ export interface OutboundMessage {
   userId: string;
   text: string;
 }
+
