@@ -3,7 +3,16 @@ import { taskTools } from "../core/gemma/tools";
 import { buildSystemPrompt } from "../core/persona/systemPrompt";
 import { TaskService } from "../core/tasks/TaskService";
 import { withUserScope } from "../db/pool";
-import type { ConversationTurn, User, FollowUpIntent, MemoryCategory, RecurrencePattern, UserMemory } from "../types/domain";
+import type {
+  ConversationTurn,
+  User,
+  FollowUpIntent,
+  MemoryCategory,
+  RecurrencePattern,
+  UserMemory,
+  FollowUp,
+  Task,
+} from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
 import { OnboardingService } from "../core/onboarding/OnboardingService";
@@ -76,11 +85,38 @@ export class ConversationOrchestrator {
     // Fetch active follow-up context and structured memories if available
     let activeFollowUp = null;
     try {
-      const activeFollowUpRecord = await this.followUpService.getLatestPendingFollowUp(user.id);
-      if (activeFollowUpRecord) {
-        const task = await this.taskService.getTask(user.id, activeFollowUpRecord.taskId);
-        if (task) {
-          activeFollowUp = { followUp: activeFollowUpRecord, task };
+      let candidates: Array<{ followUp: FollowUp; task: Task }> = [];
+      if (typeof this.followUpService.getActiveCandidateFollowUps === "function") {
+        candidates = await this.followUpService.getActiveCandidateFollowUps(user.id);
+      }
+
+      if (candidates.length === 1) {
+        activeFollowUp = candidates[0];
+      } else if (candidates.length > 1) {
+        // Check if user specifically mentioned one of the candidate tasks by name
+        const lowerText = text.toLowerCase();
+        const matched = candidates.filter((c) => {
+          const titleWords = c.task.title.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+          return titleWords.some((w: string) => lowerText.includes(w));
+        });
+
+        if (matched.length === 1) {
+          activeFollowUp = matched[0];
+        } else if (isAmbiguousFollowUpResponse(text)) {
+          // Multiple candidate follow-ups and ambiguous bare reply -> DO NOT GUESS!
+          const options = candidates.map((c) => `"${c.task.title}"`).join(" or ");
+          const reply = `You have ${candidates.length} open follow-ups. Which one did you mean — ${options}?`;
+          await this.persistTurn(user.id, "user", text);
+          await this.persistTurn(user.id, "assistant", reply);
+          return reply;
+        }
+      } else if (candidates.length === 0 && typeof this.followUpService.getLatestPendingFollowUp === "function") {
+        const activeFollowUpRecord = await this.followUpService.getLatestPendingFollowUp(user.id);
+        if (activeFollowUpRecord) {
+          const task = await this.taskService.getTask(user.id, activeFollowUpRecord.taskId);
+          if (task) {
+            activeFollowUp = { followUp: activeFollowUpRecord, task };
+          }
         }
       }
     } catch (err) {
@@ -218,7 +254,7 @@ export class ConversationOrchestrator {
         case "get_weekly_report": {
           const report = await this.insightsService.getWeeklyReport(userId, userTimezone);
           return {
-            summary: `Completed ${report.tasksCompleted}/${report.tasksCompleted + report.tasksMissed} this week.`,
+            summary: report.conversationalSummary || `Completed ${report.tasksCompleted} tasks this week.`,
             data: { report },
           };
         }
@@ -354,6 +390,26 @@ export class ConversationOrchestrator {
           };
         }
 
+        case "get_project_summary": {
+          const summary = await this.projectService.getProjectSummary(
+            userId,
+            String(call.args.project_name_or_id)
+          );
+          if (!summary) {
+            return {
+              summary: "I couldn't find that project.",
+              data: { success: false, error: "project_not_found" },
+            };
+          }
+          const remainingLines = summary.remainingTasks.length > 0
+            ? "\nRemaining:\n" + summary.remainingTasks.map((t) => `• ${t.title} (due ${new Date(t.dueAt).toLocaleDateString()})`).join("\n")
+            : "\nAll tasks completed!";
+          return {
+            summary: `Project "${summary.project.name}": ${summary.completedTasks}/${summary.totalTasks} completed (${summary.completionPercentage}%). ${summary.pendingTasks} remaining.${remainingLines}`,
+            data: { success: true, summary },
+          };
+        }
+
         case "complete_registration": {
           await this.userService.completeRegistration(
             userId,
@@ -430,4 +486,14 @@ export class ConversationOrchestrator {
       );
     });
   }
+}
+
+function isAmbiguousFollowUpResponse(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  const ambiguousPhrases = [
+    "yes", "done", "finished", "finished it", "done with it", "i did it", "already did it",
+    "not yet", "no", "later", "snooze", "tomorrow", "cancel", "cancel it", "forget it",
+    "give me an hour", "move it", "reschedule", "snooze 30", "snooze 60"
+  ];
+  return ambiguousPhrases.includes(normalized) || normalized.length <= 15;
 }

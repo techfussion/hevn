@@ -124,9 +124,19 @@ async function processFollowUps() {
 
       const messageText = `Following up on "${row.title}" — have you managed to get this done? Reply "done", "not yet", or let me know when to check back.`;
 
+      const buttons =
+        row.platform === "telegram"
+          ? [
+              { label: "Done", action: `fu:${followUp.id}:done` },
+              { label: "Not Yet", action: `fu:${followUp.id}:not_yet` },
+              { label: "+1 Hour", action: `fu:${followUp.id}:snooze_60` },
+            ]
+          : undefined;
+
       await adapter.sendMessage({
         userId: row.platform_user_id,
         text: messageText,
+        buttons,
       });
 
       await followUpService.markDelivered(followUp.id);

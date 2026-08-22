@@ -105,6 +105,30 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ProjectSummary {
+  project: Project;
+  totalTasks: number;
+  completedTasks: number;
+  pendingTasks: number;
+  overdueTasks: number;
+  upcomingTasks: number;
+  commitmentsCount: number;
+  completionPercentage: number;
+  remainingTasks: Array<{
+    id: string;
+    title: string;
+    dueAt: string;
+    priority: TaskPriority;
+    taskType: TaskType;
+    isPreparation: boolean;
+  }>;
+  completedTasksList: Array<{
+    id: string;
+    title: string;
+    dueAt: string;
+  }>;
+}
+
 export interface User {
   id: string;
   platform: "telegram" | "whatsapp";
@@ -131,6 +155,11 @@ export interface ConversationTurn {
   timestamp: string;
 }
 
+export interface ActionButton {
+  label: string;
+  action: string;
+}
+
 /**
  * Outbound message the orchestrator wants sent back to the user.
  * Platform adapters translate this into their own send format.
@@ -138,4 +167,5 @@ export interface ConversationTurn {
 export interface OutboundMessage {
   userId: string;
   text: string;
+  buttons?: ActionButton[];
 }

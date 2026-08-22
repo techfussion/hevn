@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { withUserScope } from "../../db/pool";
-import type { Project, Task, TaskPriority, TaskStatus, TaskType } from "../../types/domain";
+import type { Project, Task, TaskPriority, TaskStatus, TaskType, ProjectSummary } from "../../types/domain";
 
 const createProjectSchema = z.object({
   name: z.string().min(1).max(100),
@@ -53,6 +53,101 @@ export class ProjectService {
       return {
         project: mapProjectRow(pRows[0]),
         tasks: tRows.map(mapTaskRow),
+      };
+    });
+  }
+
+  /**
+   * Deterministically calculates project rollups and status metrics.
+   * Matches by project UUID or case-insensitive name.
+   */
+  async getProjectSummary(userId: string, projectNameOrId: string): Promise<ProjectSummary | null> {
+    const query = projectNameOrId.trim();
+    if (!query) return null;
+
+    return withUserScope(userId, async (client) => {
+      let projectRow: Record<string, unknown> | undefined;
+
+      if (isUuid(query)) {
+        const { rows } = await client.query(
+          `SELECT * FROM projects WHERE id = $1 AND user_id = $2`,
+          [query, userId]
+        );
+        projectRow = rows[0];
+      } else {
+        const { rows } = await client.query(
+          `SELECT * FROM projects WHERE user_id = $1 AND name ILIKE ('%' || $2 || '%') ORDER BY created_at DESC LIMIT 1`,
+          [userId, query]
+        );
+        projectRow = rows[0];
+      }
+
+      if (!projectRow) return null;
+
+      const project = mapProjectRow(projectRow);
+      const { rows: taskRows } = await client.query(
+        `SELECT * FROM tasks WHERE project_id = $1 AND user_id = $2 ORDER BY due_at ASC`,
+        [project.id, userId]
+      );
+
+      const tasks = taskRows.map(mapTaskRow);
+      const now = new Date().getTime();
+
+      let completedCount = 0;
+      let pendingCount = 0;
+      let overdueCount = 0;
+      let upcomingCount = 0;
+      let commitmentsCount = 0;
+
+      const remainingTasks: ProjectSummary["remainingTasks"] = [];
+      const completedTasksList: ProjectSummary["completedTasksList"] = [];
+
+      for (const t of tasks) {
+        if (t.taskType === "commitment") {
+          commitmentsCount++;
+        }
+
+        if (t.status === "done") {
+          completedCount++;
+          completedTasksList.push({
+            id: t.id,
+            title: t.title,
+            dueAt: t.dueAt,
+          });
+        } else {
+          pendingCount++;
+          const dueTime = new Date(t.dueAt).getTime();
+          if (dueTime < now) {
+            overdueCount++;
+          } else {
+            upcomingCount++;
+          }
+
+          remainingTasks.push({
+            id: t.id,
+            title: t.title,
+            dueAt: t.dueAt,
+            priority: t.priority,
+            taskType: t.taskType,
+            isPreparation: Boolean(t.parentTaskId),
+          });
+        }
+      }
+
+      const totalTasks = tasks.length;
+      const completionPercentage = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+
+      return {
+        project,
+        totalTasks,
+        completedTasks: completedCount,
+        pendingTasks: pendingCount,
+        overdueTasks: overdueCount,
+        upcomingTasks: upcomingCount,
+        commitmentsCount,
+        completionPercentage,
+        remainingTasks,
+        completedTasksList,
       };
     });
   }

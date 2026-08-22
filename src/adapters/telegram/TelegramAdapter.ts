@@ -1,16 +1,12 @@
 import crypto from "crypto";
-import type { MessagingAdapter, IncomingMessage } from "../MessagingAdapter";
+import type { MessagingAdapter, IncomingMessage, IncomingCallbackQuery } from "../MessagingAdapter";
 import type { OutboundMessage } from "../../types/domain";
 import { logger } from "../../utils/logger";
 
 /**
- * Telegram adapter. Telegram has no 24h-session restriction, so
- * sendTemplate is just a thin pass-through to sendMessage with the
- * params interpolated — kept for interface parity with WhatsApp.
- *
- * Webhook verification: Telegram lets you set a secret token that it
- * echoes back in the `X-Telegram-Bot-Api-Secret-Token` header on every
- * webhook call. We compare it with a constant-time check.
+ * Telegram adapter.
+ * Supports free-form text messages, inline interactive keyboard buttons,
+ * callback queries, typing indicators, and timing-safe webhook verification.
  */
 export class TelegramAdapter implements MessagingAdapter {
   readonly platformName = "telegram" as const;
@@ -24,12 +20,28 @@ export class TelegramAdapter implements MessagingAdapter {
     const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
     const maxRetries = 2;
 
+    const payload: Record<string, unknown> = {
+      chat_id: message.userId,
+      text: message.text,
+    };
+
+    if (message.buttons && message.buttons.length > 0) {
+      payload.reply_markup = {
+        inline_keyboard: [
+          message.buttons.map((btn) => ({
+            text: btn.label,
+            callback_data: btn.action,
+          })),
+        ],
+      };
+    }
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: message.userId, text: message.text }),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           const body = await res.text();
@@ -49,8 +61,6 @@ export class TelegramAdapter implements MessagingAdapter {
     templateName: string,
     params: Record<string, string>
   ): Promise<void> {
-    // Telegram has no template system — just render the params into
-    // a plain message. templateName is used purely for logging/clarity.
     const rendered = Object.entries(params)
       .map(([k, v]) => `${k}: ${v}`)
       .join(", ");
@@ -72,6 +82,21 @@ export class TelegramAdapter implements MessagingAdapter {
     }
   }
 
+  async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    try {
+      await fetch(`https://api.telegram.org/bot${this.botToken}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          callback_query_id: callbackQueryId,
+          text: text || "Processed",
+        }),
+      });
+    } catch (err) {
+      logger.debug({ err, callbackQueryId }, "Failed to answer Telegram callback query");
+    }
+  }
+
   verifyWebhookSignature(_rawBody: string, headers: Record<string, string | undefined>): boolean {
     const provided = headers["x-telegram-bot-api-secret-token"];
     if (!provided) return false;
@@ -79,7 +104,6 @@ export class TelegramAdapter implements MessagingAdapter {
     const expected = Buffer.from(this.webhookSecret);
     const actual = Buffer.from(provided);
 
-    // Lengths must match before timingSafeEqual (it throws on mismatched length).
     if (expected.length !== actual.length) return false;
     return crypto.timingSafeEqual(expected, actual);
   }
@@ -92,7 +116,7 @@ export class TelegramAdapter implements MessagingAdapter {
 
     const msg = body.message;
     if (!msg || !msg.chat?.id || typeof msg.text !== "string") {
-      return null; // not a plain text message (could be a sticker, edit, etc.)
+      return null;
     }
 
     const updateId = body.update_id ? String(body.update_id) : (msg.message_id ? String(msg.message_id) : undefined);
@@ -102,6 +126,31 @@ export class TelegramAdapter implements MessagingAdapter {
       text: msg.text,
       timestamp: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
       updateId,
+    };
+  }
+
+  parseIncomingCallbackQuery(payload: unknown): IncomingCallbackQuery | null {
+    const body = payload as {
+      update_id?: number;
+      callback_query?: {
+        id?: string;
+        from?: { id?: number };
+        data?: string;
+        message?: { message_id?: number; date?: number };
+      };
+    };
+
+    const cq = body.callback_query;
+    if (!cq || !cq.id || !cq.from?.id || typeof cq.data !== "string") {
+      return null;
+    }
+
+    return {
+      id: cq.id,
+      platformUserId: String(cq.from.id),
+      data: cq.data,
+      messageId: cq.message?.message_id ? String(cq.message.message_id) : undefined,
+      timestamp: cq.message?.date ? new Date(cq.message.date * 1000).toISOString() : new Date().toISOString(),
     };
   }
 }

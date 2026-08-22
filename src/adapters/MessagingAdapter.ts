@@ -15,6 +15,14 @@ export interface IncomingMessage {
   updateId?: string;
 }
 
+export interface IncomingCallbackQuery {
+  id: string;
+  platformUserId: string;
+  data: string;
+  messageId?: string;
+  timestamp: string;
+}
+
 export interface MessagingAdapter {
   readonly platformName: "telegram" | "whatsapp";
 
@@ -41,6 +49,11 @@ export interface MessagingAdapter {
   sendTypingIndicator?(platformUserId: string): Promise<void>;
 
   /**
+   * Answer a button callback interaction (e.g. Telegram callback_query).
+   */
+  answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
+
+  /**
    * Verify that an incoming webhook request actually came from the
    * platform (signature/secret check). MUST be called before processing
    * any webhook payload. Throwing/returning false should result in the
@@ -54,4 +67,9 @@ export interface MessagingAdapter {
    * (delivery receipts, typing indicators, etc.) so callers can skip them.
    */
   parseIncomingWebhook(payload: unknown): IncomingMessage | null;
+
+  /**
+   * Parse a raw webhook payload into an interactive callback query if present.
+   */
+  parseIncomingCallbackQuery?(payload: unknown): IncomingCallbackQuery | null;
 }

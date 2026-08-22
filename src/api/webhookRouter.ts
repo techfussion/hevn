@@ -3,6 +3,7 @@ import crypto from "crypto";
 import type { MessagingAdapter } from "../adapters/MessagingAdapter";
 import { ConversationOrchestrator } from "../orchestrator/ConversationOrchestrator";
 import { UserService } from "../core/tasks/UserService";
+import { FollowUpService } from "../core/followup/FollowUpService";
 import { logger } from "../utils/logger";
 
 /**
@@ -15,7 +16,8 @@ import { logger } from "../utils/logger";
 export function buildWebhookRouter(
   adapter: MessagingAdapter,
   orchestrator: ConversationOrchestrator,
-  userService: UserService
+  userService: UserService,
+  followUpService: FollowUpService = new FollowUpService()
 ): Router {
   const router = Router();
 
@@ -47,6 +49,72 @@ export function buildWebhookRouter(
     const correlationId = crypto.randomUUID();
 
     try {
+      // 1. Check if payload is an interactive callback query (e.g. Telegram inline button click)
+      const incomingCb = adapter.parseIncomingCallbackQuery?.(req.body);
+      if (incomingCb) {
+        if (incomingCb.id) {
+          const cbKey = `${adapter.platformName}:cb:${incomingCb.id}`;
+          const acquired = await userService.tryAcquireUpdate(cbKey, adapter.platformName);
+          if (!acquired) {
+            logger.info({ correlationId, cbKey, platform: adapter.platformName }, "Skipping duplicate callback update");
+            await adapter.answerCallbackQuery?.(incomingCb.id, "Already processed");
+            return;
+          }
+        }
+
+        const user = await userService.getOrCreate(adapter.platformName, incomingCb.platformUserId);
+
+        // Parse callback data: "fu:<followup_id>:<action>"
+        const parts = incomingCb.data.split(":");
+        if (parts[0] === "fu" && parts.length === 3) {
+          const followUpId = parts[1];
+          const action = parts[2];
+
+          let intent: "completed" | "not_yet" | "snooze" | "cancelled" = "completed";
+          let snoozeMins: number | undefined;
+          let feedback = "Done!";
+
+          if (action === "done") {
+            intent = "completed";
+            feedback = "Marked as done!";
+          } else if (action === "not_yet") {
+            intent = "not_yet";
+            feedback = "Got it, not done yet.";
+          } else if (action.startsWith("snooze_")) {
+            intent = "snooze";
+            snoozeMins = parseInt(action.replace("snooze_", ""), 10) || 60;
+            feedback = `Snoozed for ${snoozeMins}m`;
+          }
+
+          const result = await followUpService.handleFollowUpResponse(
+            user.id,
+            followUpId,
+            intent,
+            undefined,
+            snoozeMins
+          );
+
+          await adapter.answerCallbackQuery?.(incomingCb.id, feedback);
+
+          let replyText = "";
+          if (intent === "completed") {
+            replyText = "Great job! I've marked this commitment as completed.";
+          } else if (intent === "not_yet") {
+            replyText = "Understood. Let me know when you'd like to reschedule or if you need assistance.";
+          } else if (intent === "snooze") {
+            replyText = `Understood. I will check back in ${snoozeMins} minutes.`;
+          }
+
+          if (replyText && result.success) {
+            await adapter.sendMessage({ userId: user.platformUserId, text: replyText });
+          }
+        } else {
+          await adapter.answerCallbackQuery?.(incomingCb.id, "Acknowledged");
+        }
+        return;
+      }
+
+      // 2. Otherwise parse standard incoming text message
       const incoming = adapter.parseIncomingWebhook(req.body);
       if (!incoming) return; // not a text message we care about (receipt, sticker, etc.)
 
@@ -73,4 +141,3 @@ export function buildWebhookRouter(
 
   return router;
 }
-

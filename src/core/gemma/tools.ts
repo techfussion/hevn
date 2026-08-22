@@ -300,6 +300,21 @@ export const taskTools: FunctionDeclaration[] = [
     },
   },
   {
+    name: "get_project_summary",
+    description:
+      "Get a complete status rollup for a project by name or ID (e.g. 'Show me everything in Q3 Proposal', 'How is the proposal going?', 'What's left for the proposal?'). Returns completion stats, remaining tasks, and upcoming commitments.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        project_name_or_id: {
+          type: Type.STRING,
+          description: "Project name (e.g. 'Q3 Proposal') or project UUID",
+        },
+      },
+      required: ["project_name_or_id"],
+    },
+  },
+  {
     name: "complete_registration",
     description:
       "Call this ONCE you have collected the user's name, IANA timezone, and chosen " +

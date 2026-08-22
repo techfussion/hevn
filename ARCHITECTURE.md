@@ -99,6 +99,55 @@ Onboarding happens completely conversationally inside WhatsApp and Telegram with
 
 The core domain model distinguishes:
 * **Commitment / Event**: e.g., "Board meeting on Friday at 2 PM", "Physics exam on Thursday".
-* **Task / Preparation**: e.g., "Prepare financial slides", "Study chapter 4".
-* **Reminder**: Scheduled notification offset before due date.
-* **Recurring Check-in**: System-generated recurring automation for free users.
+* **Task / Preparation**: e.g., "Prepare financial slides", "Study chapter 4" (linked via `parent_task_id`).
+* **Reminder**: Pre-deadline heads-up notification offset before due date.
+* **Follow-Up**: Post-deadline accountability inquiry ("Have you managed to get this done?").
+* **Recurring Task**: Generalized timezone-aware schedule (daily, weekdays, weekly, custom).
+
+---
+
+## 5. Follow-Up Engine & State Machine
+
+The `FollowUpService` manages post-deadline follow-up cycles with anti-nagging constraints (max 3 attempts):
+
+$$\text{SCHEDULED} \longrightarrow \text{DUE} \longrightarrow \text{DELIVERED} \longrightarrow \text{WAITING\_FOR\_RESPONSE}$$
+$$\text{Response} \implies \begin{cases} \text{"Done"} & \to \text{COMPLETED} \quad (\text{marks task done, cancels pending follow-ups}) \\ \text{"Not yet"} & \to \text{NOT\_YET} \\ \text{"Tomorrow"} & \to \text{RESCHEDULED} \\ \text{"Snooze 60"} & \to \text{SNOOZED} \\ \text{"Cancel"} & \to \text{CANCELLED} \end{cases}$$
+
+### Multi-Follow-Up Disambiguation
+If multiple follow-ups are awaiting response and the user provides a bare affirmative/negative response (*"Done"*, *"Yes"*, *"Not yet"*):
+- Hevn checks candidate task titles.
+- If unambiguous / single candidate $\to$ executes immediately.
+- If ambiguous $\to$ asks for clarification (*"Which one did you mean — [Task A] or [Task B]?"*).
+
+---
+
+## 6. Channel-Native Interaction & Telegram Callbacks
+
+- **Decoupled Architecture**: `OutboundMessage` carries abstract `buttons?: ActionButton[]`.
+- **Telegram Adapter**: Maps buttons into `reply_markup.inline_keyboard` (`fu:<id>:done`, `fu:<id>:not_yet`, `fu:<id>:snooze_60`).
+- **Webhook Gateway**:
+  1. Verifies secret token signature (`timingSafeEqual`).
+  2. Deduplicates by callback ID (`tryAcquireUpdate`).
+  3. Validates user ownership in `FollowUpService`.
+  4. Answers callback query (`answerCallbackQuery`) to clear UI spinner.
+  5. Idempotent: duplicate button clicks do not duplicate state mutations or notifications.
+
+---
+
+## 7. Project Intelligence & Rollups
+
+The `ProjectService` groups tasks and commitments under projects (`project_id`).
+- Deterministic application-level status rollup calculations:
+  - `totalTasks`, `completedTasks`, `pendingTasks`, `overdueTasks`, `upcomingTasks`, `commitmentsCount`, `completionPercentage`.
+- Conversational tool `get_project_summary` returns structured rollups for LLM rendering.
+
+---
+
+## 8. Follow-Through Analytics & Metrics
+
+Calculated deterministically in `InsightsService`:
+- **Completion Rate**: $\frac{\text{Completed Eligible Tasks}}{\text{Total Due Tasks}} \times 100$
+- **Follow-Through Rate**: $\frac{\text{Follow-Ups Completed}}{\text{Follow-Ups Delivered}} \times 100$
+- **Commitments Completed / Created**: Tracked explicitly.
+- **Conversational Summary**: Natural prose generation without exposing raw metric variable names.
+

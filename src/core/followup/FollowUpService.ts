@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { withUserScope, getSchedulerPool } from "../../db/pool";
-import type { FollowUp, FollowUpStatus, FollowUpIntent } from "../../types/domain";
+import type { FollowUp, FollowUpStatus, FollowUpIntent, Task } from "../../types/domain";
 import { logger } from "../../utils/logger";
 
 const isoDateTime = z
@@ -191,6 +191,57 @@ export class FollowUpService {
         [userId]
       );
       return rows[0] ? mapFollowUpRow(rows[0]) : null;
+    });
+  }
+
+  /**
+   * Retrieves all active candidate follow-ups currently awaiting user response or due.
+   */
+  async getActiveCandidateFollowUps(userId: string): Promise<Array<{ followUp: FollowUp; task: Task }>> {
+    return withUserScope(userId, async (client) => {
+      const { rows } = await client.query(
+        `SELECT f.*,
+                t.title as t_title,
+                t.due_at as t_due_at,
+                t.priority as t_priority,
+                t.status as t_status,
+                t.task_type as t_task_type,
+                t.is_system_generated as t_is_system_generated,
+                t.parent_task_id as t_parent_task_id,
+                t.project_id as t_project_id,
+                t.reminder_offset_minutes as t_reminder_offset_minutes,
+                t.reminder_sent_at as t_reminder_sent_at,
+                t.created_at as t_created_at,
+                t.updated_at as t_updated_at
+         FROM follow_ups f
+         JOIN tasks t ON f.task_id = t.id
+         WHERE f.user_id = $1
+           AND f.status IN ('WAITING_FOR_RESPONSE', 'NOT_YET', 'DUE')
+           AND t.status IN ('pending', 'in_progress')
+         ORDER BY (f.status = 'WAITING_FOR_RESPONSE') DESC, f.updated_at DESC
+         LIMIT 10`,
+        [userId]
+      );
+
+      return rows.map((r) => ({
+        followUp: mapFollowUpRow(r),
+        task: {
+          id: r.task_id as string,
+          userId: r.user_id as string,
+          title: r.t_title as string,
+          dueAt: (r.t_due_at as Date).toISOString(),
+          priority: r.t_priority as Task["priority"],
+          status: r.t_status as Task["status"],
+          taskType: r.t_task_type as Task["taskType"],
+          isSystemGenerated: Boolean(r.t_is_system_generated),
+          parentTaskId: (r.t_parent_task_id as string | null) ?? null,
+          projectId: (r.t_project_id as string | null) ?? null,
+          reminderOffsetMinutes: (r.t_reminder_offset_minutes as number | null) ?? null,
+          reminderSentAt: r.t_reminder_sent_at ? (r.t_reminder_sent_at as Date).toISOString() : null,
+          createdAt: (r.t_created_at as Date).toISOString(),
+          updatedAt: (r.t_updated_at as Date).toISOString(),
+        },
+      }));
     });
   }
 
