@@ -15,9 +15,9 @@ export const taskTools: FunctionDeclaration[] = [
   {
     name: "create_task",
     description:
-      "Create a new task, commitment, meeting, assignment, exam, or event. Call this " +
-      "as soon as you have a clear title and due date/time from the conversation, " +
-      "even if reminder timing hasn't been decided yet.",
+      "Create a new task, commitment, meeting, assignment, exam, or event. " +
+      "Use task_type='commitment' for milestone events (e.g. 'I have an exam Thursday', 'board meeting on Friday'). " +
+      "Use task_type='task' for concrete action items or preparation tasks.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -26,19 +26,29 @@ export const taskTools: FunctionDeclaration[] = [
           type: Type.STRING,
           description:
             "Due date and time in ISO 8601 format, resolved from the user's " +
-            "message and the current date provided in context. If only a date " +
-            "is given with no time, default to 23:59.",
+            "message and current datetime in context. If only date is given, default to 23:59.",
         },
         priority: {
           type: Type.STRING,
           enum: ["low", "medium", "high"],
           description: "Infer from urgency/language if not stated explicitly.",
         },
+        task_type: {
+          type: Type.STRING,
+          enum: ["task", "commitment", "reminder"],
+          description: "Default is 'task'. Use 'commitment' for milestone events/exams/meetings.",
+        },
+        parent_task_id: {
+          type: Type.STRING,
+          description: "Optional ID of a parent commitment (for linked preparation tasks).",
+        },
+        project_id: {
+          type: Type.STRING,
+          description: "Optional project ID to associate this task with.",
+        },
         reminder_offset_minutes: {
           type: Type.NUMBER,
-          description:
-            "Minutes before due_at_iso to send a reminder. Ask the user if " +
-            "unspecified, or omit this field to ask separately.",
+          description: "Minutes before due_at_iso to send a reminder (e.g. 60, 1440).",
         },
       },
       required: ["title", "due_at_iso", "priority"],
@@ -55,6 +65,7 @@ export const taskTools: FunctionDeclaration[] = [
         due_at_iso: { type: Type.STRING },
         priority: { type: Type.STRING, enum: ["low", "medium", "high"] },
         reminder_offset_minutes: { type: Type.NUMBER },
+        project_id: { type: Type.STRING },
       },
       required: ["task_id"],
     },
@@ -103,8 +114,7 @@ export const taskTools: FunctionDeclaration[] = [
     name: "get_weekly_report",
     description:
       "Get the user's productivity summary for the past 7 days — completion rate, " +
-      "missed tasks, best day, and suggestions. Call this when the user asks how " +
-      "they're doing, for a weekly report, or similar progress questions.",
+      "missed tasks, best day, and suggestions.",
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -115,9 +125,7 @@ export const taskTools: FunctionDeclaration[] = [
     name: "create_task_breakdown",
     description:
       "Break a larger goal (project, presentation, thesis, product launch, exam prep) into " +
-      "several smaller tasks with staggered due dates, when the user describes something " +
-      "spanning multiple weeks or clearly needing more than one step. Decide a sensible " +
-      "breakdown yourself with due dates spread between now and the final deadline.",
+      "several smaller tasks with staggered due dates.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -132,7 +140,7 @@ export const taskTools: FunctionDeclaration[] = [
               priority: { type: Type.STRING, enum: ["low", "medium", "high"] },
               reminder_offset_minutes: {
                 type: Type.NUMBER,
-                description: "Minutes before this subtask's due date to send a reminder. Omit to default to 60.",
+                description: "Minutes before this subtask's due date to send a reminder.",
               },
             },
             required: ["title", "due_at_iso", "priority"],
@@ -140,6 +148,155 @@ export const taskTools: FunctionDeclaration[] = [
         },
       },
       required: ["subtasks"],
+    },
+  },
+  {
+    name: "schedule_followup",
+    description:
+      "Explicitly schedule a follow-up inquiry to ask if the user completed a task/commitment at a designated time.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        task_id: { type: Type.STRING, description: "ID of the task to follow up on" },
+        scheduled_at_iso: { type: Type.STRING, description: "ISO 8601 datetime to send the follow-up" },
+      },
+      required: ["task_id", "scheduled_at_iso"],
+    },
+  },
+  {
+    name: "respond_followup",
+    description:
+      "Resolve or update an active follow-up when user replies ('Done', 'Not yet', 'Remind me tomorrow', 'Cancel').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        followup_id: { type: Type.STRING, description: "ID of the follow-up being responded to" },
+        intent: {
+          type: Type.STRING,
+          enum: ["completed", "not_yet", "reschedule", "snooze", "cancelled"],
+          description: "The user's response intent",
+        },
+        new_scheduled_at_iso: {
+          type: Type.STRING,
+          description: "Required when intent='reschedule' — the new ISO 8601 datetime to check back.",
+        },
+        snooze_minutes: {
+          type: Type.NUMBER,
+          description: "Required when intent='snooze' — minutes to delay by.",
+        },
+      },
+      required: ["followup_id", "intent"],
+    },
+  },
+  {
+    name: "create_recurring_task",
+    description:
+      "Create a generalized recurring task (e.g. 'Every Monday at 9am remind me to send the weekly report', 'Every weekday at 8am check priorities').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: "Title of the recurring task" },
+        recurrence_pattern: {
+          type: Type.STRING,
+          enum: ["daily", "weekly", "weekdays", "custom"],
+          description: "Recurrence pattern type",
+        },
+        days_of_week: {
+          type: Type.ARRAY,
+          items: { type: Type.NUMBER },
+          description: "For weekly pattern: array of day numbers (0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat).",
+        },
+        time_of_day: {
+          type: Type.STRING,
+          description: "Time of day in HH:MM 24-hour format (e.g. '09:00', '17:30').",
+        },
+        priority: {
+          type: Type.STRING,
+          enum: ["low", "medium", "high"],
+        },
+      },
+      required: ["title", "recurrence_pattern", "time_of_day"],
+    },
+  },
+  {
+    name: "list_recurring_tasks",
+    description: "List all active recurring task schedules for the user.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "cancel_recurring_task",
+    description: "Cancel an active recurring task schedule.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        recurring_task_id: { type: Type.STRING, description: "ID of the recurring task to cancel" },
+      },
+      required: ["recurring_task_id"],
+    },
+  },
+  {
+    name: "store_memory",
+    description:
+      "Persist structured persistent context, user facts, collaborators, or preferences (e.g. 'I work with Sarah on finance', 'My weekly report is due Fridays').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        category: {
+          type: Type.STRING,
+          enum: ["fact", "person", "project", "preference", "general"],
+          description: "Category of the memory",
+        },
+        content: { type: Type.STRING, description: "Structured fact or context to remember" },
+        key: { type: Type.STRING, description: "Optional short key (e.g. 'collaborator_sarah', 'weekly_report_day')" },
+      },
+      required: ["category", "content"],
+    },
+  },
+  {
+    name: "forget_memory",
+    description: "Remove or correct a previously remembered fact or context by key or content matching.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        key_or_content: { type: Type.STRING, description: "Key or phrase to remove from memory (e.g. 'Sarah', 'weekly report')" },
+      },
+      required: ["key_or_content"],
+    },
+  },
+  {
+    name: "query_memories",
+    description: "Look up structured memories and stored user context.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: { type: Type.STRING, description: "Search query for memory lookup" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "create_project",
+    description: "Create a lightweight project to group related tasks and commitments (e.g. 'Q3 Client Proposal', 'Final Year Thesis').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: "Project name" },
+        description: { type: Type.STRING, description: "Optional short project description" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "query_projects",
+    description: "List the user's active projects.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -168,11 +325,23 @@ export const taskTools: FunctionDeclaration[] = [
     name: "set_checkin_time",
     description:
       "Change what hour (0-23, in the user's local timezone) the daily morning " +
-      "check-in is sent. Call when the user wants to adjust their check-in time.",
+      "check-in is sent.",
     parameters: {
       type: Type.OBJECT,
       properties: { hour: { type: Type.NUMBER } },
       required: ["hour"],
+    },
+  },
+  {
+    name: "set_quiet_hours",
+    description: "Configure user's quiet hours (e.g. '22:00' to '07:00') during which proactive notifications are held until morning.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        start_time: { type: Type.STRING, description: "HH:MM format, e.g. '22:00'" },
+        end_time: { type: Type.STRING, description: "HH:MM format, e.g. '07:00'" },
+      },
+      required: ["start_time", "end_time"],
     },
   },
 ];

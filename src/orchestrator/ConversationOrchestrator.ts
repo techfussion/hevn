@@ -3,24 +3,40 @@ import { taskTools } from "../core/gemma/tools";
 import { buildSystemPrompt } from "../core/persona/systemPrompt";
 import { TaskService } from "../core/tasks/TaskService";
 import { withUserScope } from "../db/pool";
-import type { ConversationTurn, User } from "../types/domain";
+import type { ConversationTurn, User, FollowUpIntent, MemoryCategory, RecurrencePattern, UserMemory } from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
 import { OnboardingService } from "../core/onboarding/OnboardingService";
+import { FollowUpService } from "../core/followup/FollowUpService";
+import { RecurringTaskService } from "../core/recurring/RecurringTaskService";
+import { MemoryService } from "../core/memory/MemoryService";
+import { ProjectService } from "../core/projects/ProjectService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
 
 export class ConversationOrchestrator {
   private onboardingService: OnboardingService;
+  private followUpService: FollowUpService;
+  private recurringService: RecurringTaskService;
+  private memoryService: MemoryService;
+  private projectService: ProjectService;
 
   constructor(
     private gemma: GemmaClient,
     private taskService: TaskService,
     private userService: UserService,
-    private insightsService: InsightsService
+    private insightsService: InsightsService,
+    followUpService?: FollowUpService,
+    recurringService?: RecurringTaskService,
+    memoryService?: MemoryService,
+    projectService?: ProjectService
   ) {
     this.onboardingService = new OnboardingService(this.userService, this.taskService);
+    this.followUpService = followUpService || new FollowUpService();
+    this.recurringService = recurringService || new RecurringTaskService();
+    this.memoryService = memoryService || new MemoryService();
+    this.projectService = projectService || new ProjectService();
   }
 
   /**
@@ -57,6 +73,27 @@ export class ConversationOrchestrator {
     const history = await this.getRecentHistory(user.id);
     const nowInUserTz = new Date().toLocaleString("sv-SE", { timeZone: user.timezone });
 
+    // Fetch active follow-up context and structured memories if available
+    let activeFollowUp = null;
+    try {
+      const activeFollowUpRecord = await this.followUpService.getLatestPendingFollowUp(user.id);
+      if (activeFollowUpRecord) {
+        const task = await this.taskService.getTask(user.id, activeFollowUpRecord.taskId);
+        if (task) {
+          activeFollowUp = { followUp: activeFollowUpRecord, task };
+        }
+      }
+    } catch (err) {
+      logger.debug({ err, userId: user.id }, "Could not fetch pending follow-up context");
+    }
+
+    let memories: UserMemory[] = [];
+    try {
+      memories = await this.memoryService.getMemories(user.id, undefined, 10);
+    } catch (err) {
+      logger.debug({ err, userId: user.id }, "Could not fetch user memories");
+    }
+
     const systemPrompt = buildSystemPrompt({
       botName: user.assistantName || user.botPersona || "Hevn",
       studentName: user.displayName,
@@ -64,6 +101,8 @@ export class ConversationOrchestrator {
       currentIsoDateTime: nowInUserTz,
       timezone: user.timezone,
       isOnboarded: true,
+      activeFollowUp,
+      memories,
     });
 
     const MAX_TOOL_ROUNDS = 3; // hard cap — prevents a runaway tool-calling loop from burning quota/cost
@@ -116,6 +155,9 @@ export class ConversationOrchestrator {
             title: call.args.title,
             dueAtIso: call.args.due_at_iso,
             priority: call.args.priority,
+            taskType: call.args.task_type ?? "task",
+            parentTaskId: call.args.parent_task_id ?? null,
+            projectId: call.args.project_id ?? null,
             reminderOffsetMinutes: call.args.reminder_offset_minutes ?? null,
           });
           return {
@@ -123,17 +165,20 @@ export class ConversationOrchestrator {
             data: { success: true, task },
           };
         }
+
         case "update_task": {
           const task = await this.taskService.updateTask(userId, String(call.args.task_id), {
             title: call.args.title as string | undefined,
             dueAtIso: call.args.due_at_iso as string | undefined,
             priority: call.args.priority as "low" | "medium" | "high" | undefined,
             reminderOffsetMinutes: call.args.reminder_offset_minutes as number | undefined,
+            projectId: call.args.project_id as string | undefined,
           });
           return task
             ? { summary: `Updated "${task.title}".`, data: { success: true, task } }
             : { summary: "I couldn't find that task.", data: { success: false, error: "task_not_found" } };
         }
+
         case "mark_task_status": {
           const task = await this.taskService.markStatus(
             userId,
@@ -144,6 +189,7 @@ export class ConversationOrchestrator {
             ? { summary: `Marked "${task.title}" as ${task.status}.`, data: { success: true, task } }
             : { summary: "I couldn't find that task.", data: { success: false, error: "task_not_found" } };
         }
+
         case "snooze_task": {
           const task = await this.taskService.snoozeTask(
             userId,
@@ -157,16 +203,18 @@ export class ConversationOrchestrator {
               }
             : { summary: "I couldn't find that task.", data: { success: false, error: "task_not_found" } };
         }
+
         case "get_upcoming_tasks": {
           const tasks = await this.taskService.getUpcomingTasks(userId, Number(call.args.limit ?? 10));
           return {
             summary:
               tasks.length === 0
                 ? "You have nothing upcoming — clean slate!"
-                : tasks.map((t) => `• ${t.title} — ${new Date(t.dueAt).toLocaleString()}`).join("\n"),
+                : tasks.map((t) => `• ${t.title} [${t.taskType}] — ${new Date(t.dueAt).toLocaleString()}`).join("\n"),
             data: { tasks },
           };
         }
+
         case "get_weekly_report": {
           const report = await this.insightsService.getWeeklyReport(userId, userTimezone);
           return {
@@ -174,6 +222,7 @@ export class ConversationOrchestrator {
             data: { report },
           };
         }
+
         case "create_task_breakdown": {
           const subtaskItems = Array.isArray(call.args.subtasks)
             ? (call.args.subtasks as Array<Record<string, unknown>>)
@@ -191,6 +240,120 @@ export class ConversationOrchestrator {
             data: { success: true, tasks },
           };
         }
+
+        case "schedule_followup": {
+          const followUp = await this.followUpService.scheduleFollowUp(
+            userId,
+            String(call.args.task_id),
+            String(call.args.scheduled_at_iso)
+          );
+          return {
+            summary: `Scheduled follow-up for ${new Date(followUp.scheduledAt).toLocaleString()}.`,
+            data: { success: true, followUp },
+          };
+        }
+
+        case "respond_followup": {
+          const result = await this.followUpService.handleFollowUpResponse(
+            userId,
+            String(call.args.followup_id),
+            call.args.intent as FollowUpIntent,
+            call.args.new_scheduled_at_iso ? String(call.args.new_scheduled_at_iso) : undefined,
+            call.args.snooze_minutes ? Number(call.args.snooze_minutes) : undefined
+          );
+          return {
+            summary: result.message,
+            data: result,
+          };
+        }
+
+        case "create_recurring_task": {
+          const recurring = await this.recurringService.createRecurringTask(userId, {
+            title: call.args.title,
+            recurrencePattern: call.args.recurrence_pattern as RecurrencePattern,
+            daysOfWeek: Array.isArray(call.args.days_of_week) ? (call.args.days_of_week as number[]) : null,
+            timeOfDay: String(call.args.time_of_day || "09:00"),
+            timezone: userTimezone,
+            priority: call.args.priority ?? "medium",
+          });
+          return {
+            summary: `Created recurring task "${recurring.title}" (${recurring.recurrencePattern} at ${recurring.timeOfDay}). Next run: ${new Date(recurring.nextRunAt).toLocaleString()}.`,
+            data: { success: true, recurring },
+          };
+        }
+
+        case "list_recurring_tasks": {
+          const recurring = await this.recurringService.listRecurringTasks(userId);
+          return {
+            summary:
+              recurring.length === 0
+                ? "No active recurring tasks."
+                : recurring.map((r) => `• ${r.title} (${r.recurrencePattern} at ${r.timeOfDay})`).join("\n"),
+            data: { recurring },
+          };
+        }
+
+        case "cancel_recurring_task": {
+          const success = await this.recurringService.cancelRecurringTask(userId, String(call.args.recurring_task_id));
+          return {
+            summary: success ? "Recurring task cancelled." : "Could not find recurring task.",
+            data: { success },
+          };
+        }
+
+        case "store_memory": {
+          const memory = await this.memoryService.storeMemory(userId, {
+            category: (call.args.category as MemoryCategory) || "general",
+            content: String(call.args.content),
+            key: call.args.key ? String(call.args.key) : null,
+          });
+          return {
+            summary: `Remembered: "${memory.content}"`,
+            data: { success: true, memory },
+          };
+        }
+
+        case "forget_memory": {
+          const success = await this.memoryService.forgetMemoryByKey(userId, String(call.args.key_or_content));
+          return {
+            summary: success ? "Updated memory." : "No matching memory found.",
+            data: { success },
+          };
+        }
+
+        case "query_memories": {
+          const memories = await this.memoryService.searchMemories(userId, String(call.args.query || ""));
+          return {
+            summary:
+              memories.length === 0
+                ? "No memories found."
+                : memories.map((m) => `• [${m.category}] ${m.content}`).join("\n"),
+            data: { memories },
+          };
+        }
+
+        case "create_project": {
+          const project = await this.projectService.createProject(userId, {
+            name: String(call.args.name),
+            description: call.args.description ? String(call.args.description) : null,
+          });
+          return {
+            summary: `Created project "${project.name}".`,
+            data: { success: true, project },
+          };
+        }
+
+        case "query_projects": {
+          const projects = await this.projectService.getProjects(userId);
+          return {
+            summary:
+              projects.length === 0
+                ? "No projects found."
+                : projects.map((p) => `• ${p.name}: ${p.description || "No description"}`).join("\n"),
+            data: { projects },
+          };
+        }
+
         case "complete_registration": {
           await this.userService.completeRegistration(
             userId,
@@ -200,10 +363,24 @@ export class ConversationOrchestrator {
           );
           return { summary: "Registration complete.", data: { success: true } };
         }
+
         case "set_checkin_time": {
           await this.userService.setCheckinHour(userId, Number(call.args.hour));
           return { summary: "Check-in time updated.", data: { success: true } };
         }
+
+        case "set_quiet_hours": {
+          await this.userService.setQuietHours(
+            userId,
+            String(call.args.start_time),
+            String(call.args.end_time)
+          );
+          return {
+            summary: `Quiet hours set from ${call.args.start_time} to ${call.args.end_time}.`,
+            data: { success: true },
+          };
+        }
+
         default:
           return { summary: "I don't support that action yet.", data: { success: false, error: "unsupported_tool" } };
       }

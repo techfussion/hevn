@@ -1,5 +1,5 @@
 import { getPool, withUserScope } from "../../db/pool";
-import type { User, OnboardingState, UserPersona } from "../../types/domain";
+import type { User, OnboardingState, UserPersona, FollowUpPreference } from "../../types/domain";
 
 const DEFAULT_TIMEZONE = "UTC";
 
@@ -15,8 +15,8 @@ export class UserService {
 
     try {
       const inserted = await pool.query(
-        `INSERT INTO users (platform, platform_user_id, timezone, onboarding_state, assistant_name, persona, preferred_checkin_time, preferred_checkin_hour, plan)
-         VALUES ($1, $2, $3, 'WELCOME', 'Hevn', 'professional', '06:00', 6, 'free')
+        `INSERT INTO users (platform, platform_user_id, timezone, onboarding_state, assistant_name, persona, preferred_checkin_time, preferred_checkin_hour, plan, followup_preference)
+         VALUES ($1, $2, $3, 'WELCOME', 'Hevn', 'professional', '06:00', 6, 'free', 'active')
          RETURNING *`,
         [platform, platformUserId, DEFAULT_TIMEZONE]
       );
@@ -115,6 +115,25 @@ export class UserService {
     });
   }
 
+  async setFollowUpPreference(userId: string, preference: FollowUpPreference): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      await client.query(`UPDATE users SET followup_preference = $1 WHERE id = $2`, [
+        preference,
+        userId,
+      ]);
+    });
+  }
+
+  async setQuietHours(userId: string, start: string | null, end: string | null): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      await client.query(`UPDATE users SET quiet_hours_start = $1, quiet_hours_end = $2 WHERE id = $3`, [
+        start,
+        end,
+        userId,
+      ]);
+    });
+  }
+
   async tryAcquireUpdate(updateId: string, platform: "telegram" | "whatsapp"): Promise<boolean> {
     const pool = getPool();
     try {
@@ -138,6 +157,7 @@ function mapRow(row: Record<string, unknown>): User {
   const preferredCheckinTime = (row.preferred_checkin_time as string) || `${String(preferredCheckinHour).padStart(2, "0")}:00`;
   const persona = ((row.persona as string) || "professional") as UserPersona;
   const onboardingState = ((row.onboarding_state as string) || (row.onboarded ? "COMPLETED" : "WELCOME")) as OnboardingState;
+  const followupPreference = ((row.followup_preference as string) || "active") as FollowUpPreference;
 
   return {
     id: row.id as string,
@@ -153,6 +173,9 @@ function mapRow(row: Record<string, unknown>): User {
     preferredCheckinTime,
     preferredCheckinHour,
     plan: ((row.plan as string) || "free") as "free" | "pro",
+    followupPreference,
+    quietHoursStart: (row.quiet_hours_start as string | null) ?? null,
+    quietHoursEnd: (row.quiet_hours_end as string | null) ?? null,
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString()

@@ -18,6 +18,25 @@ export type OnboardingState =
 export type UserPersona = "student" | "executive_assistant" | "professional";
 export type AssistantName = "Mumin" | "Khadijah" | "Scott" | "Claire" | string;
 
+export type FollowUpStatus =
+  | "SCHEDULED"
+  | "DUE"
+  | "DELIVERED"
+  | "WAITING_FOR_RESPONSE"
+  | "COMPLETED"
+  | "NOT_YET"
+  | "RESCHEDULED"
+  | "SNOOZED"
+  | "CANCELLED";
+
+export type FollowUpIntent = "completed" | "not_yet" | "reschedule" | "snooze" | "cancelled";
+export type FollowUpPreference = "active" | "relaxed" | "off";
+
+export type RecurrencePattern = "daily" | "weekly" | "weekdays" | "custom";
+export type RecurringTaskStatus = "active" | "paused" | "cancelled";
+
+export type MemoryCategory = "fact" | "person" | "project" | "preference" | "general";
+
 export interface Task {
   id: string;
   userId: string;
@@ -27,8 +46,61 @@ export interface Task {
   status: TaskStatus;
   taskType: TaskType;
   isSystemGenerated: boolean;
+  parentTaskId?: string | null;
+  projectId?: string | null;
   reminderOffsetMinutes: number | null; // null = no reminder requested
   reminderSentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FollowUp {
+  id: string;
+  userId: string;
+  taskId: string;
+  scheduledAt: string;
+  status: FollowUpStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  lastAttemptAt: string | null;
+  deliveredAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurringTask {
+  id: string;
+  userId: string;
+  title: string;
+  recurrencePattern: RecurrencePattern;
+  daysOfWeek: number[] | null; // 0=Sun, 1=Mon, ..., 6=Sat
+  timeOfDay: string; // "HH:MM" e.g. "09:00"
+  timezone: string;
+  priority: TaskPriority;
+  status: RecurringTaskStatus;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserMemory {
+  id: string;
+  userId: string;
+  category: MemoryCategory;
+  content: string;
+  key: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Project {
+  id: string;
+  userId: string;
+  name: string;
+  description: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +119,9 @@ export interface User {
   preferredCheckinTime: string; // e.g. "06:00", "07:30"
   preferredCheckinHour: number; // 0..23
   plan: "free" | "pro";
+  followupPreference: FollowUpPreference;
+  quietHoursStart: string | null; // e.g. "22:00"
+  quietHoursEnd: string | null; // e.g. "07:00"
   createdAt: string;
 }
 
@@ -64,4 +139,3 @@ export interface OutboundMessage {
   userId: string;
   text: string;
 }
-
