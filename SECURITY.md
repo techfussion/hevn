@@ -31,8 +31,17 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
 * Express rate limiting (`express-rate-limit`) limits webhook ingestion to 20 requests per minute per IP.
 * History retrieval is capped at 6 turns, and conversation history is automatically pruned to the last 50 turns per user to uphold data minimization principles.
 
+### F. Voice Notes & Media Security Boundaries
+* **SSRF Prevention**: All media downloads are restricted to verified provider endpoints.
+  * Telegram: Downloads only from `api.telegram.org/file/bot<token>/...` with strict directory traversal prevention (`..` checks).
+  * WhatsApp: Meta CDN download URLs are validated against a strict hostname whitelist (`.fbsbx.com`, `.fbcdn.net`, `.facebook.com`, `.whatsapp.net`). Arbitrary user-supplied URLs are never fetched.
+* **Audio Input Trust Boundary**: Speech transcripts are treated as ordinary untrusted user text. Transcripts containing adversarial prompt injections or override attempts remain trapped within the `<STORED_USER_CONTEXT>` and system prompt non-negotiable boundaries.
+* **Audio Size & Duration Limits**: Hardcoded validation limits (max 180s duration, max 20MB size, supported MIME types only) prevent resource exhaustion and denial-of-service.
+* **Privacy & Ephemeral Audio Handling**: Audio binaries are processed in-memory as ephemeral buffers, transcribed, and immediately garbage collected. No raw audio files are stored on disk or in the database.
+
 ---
 
 ## 3. Vulnerability Reporting
 
 If you identify any security issue, do not commit sensitive keys or logs to version control. Report findings to the security team or create a private security advisory.
+

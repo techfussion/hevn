@@ -5,7 +5,7 @@ import { logger } from "../../utils/logger";
 
 /**
  * Telegram adapter.
- * Supports free-form text messages, inline interactive keyboard buttons,
+ * Supports free-form text messages, voice notes, audio files, inline keyboard buttons,
  * callback queries, typing indicators, and timing-safe webhook verification.
  */
 export class TelegramAdapter implements MessagingAdapter {
@@ -97,6 +97,48 @@ export class TelegramAdapter implements MessagingAdapter {
     }
   }
 
+  /**
+   * Securely downloads an audio or voice file from Telegram's media API.
+   * Enforces provider-authenticated retrieval to prevent arbitrary URL fetching (SSRF).
+   */
+  async downloadAudio(mediaId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const getFileUrl = `https://api.telegram.org/bot${this.botToken}/getFile?file_id=${encodeURIComponent(mediaId)}`;
+    const fileRes = await fetch(getFileUrl);
+    if (!fileRes.ok) {
+      const errBody = await fileRes.text();
+      throw new Error(`Telegram getFile failed (${fileRes.status}): ${errBody}`);
+    }
+
+    const fileData = (await fileRes.json()) as { ok: boolean; result?: { file_path?: string } };
+    if (!fileData.ok || !fileData.result?.file_path) {
+      throw new Error("Telegram getFile returned invalid result");
+    }
+
+    const filePath = fileData.result.file_path;
+    if (filePath.includes("..") || filePath.includes("://")) {
+      throw new Error("Invalid Telegram file path");
+    }
+
+    const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+    const downloadRes = await fetch(downloadUrl);
+    if (!downloadRes.ok) {
+      throw new Error(`Telegram file download failed (${downloadRes.status})`);
+    }
+
+    const arrayBuffer = await downloadRes.arrayBuffer();
+    const mimeType =
+      filePath.endsWith(".oga") || filePath.endsWith(".ogg")
+        ? "audio/ogg"
+        : filePath.endsWith(".mp3")
+        ? "audio/mpeg"
+        : "audio/ogg";
+
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimeType,
+    };
+  }
+
   verifyWebhookSignature(_rawBody: string, headers: Record<string, string | undefined>): boolean {
     const provided = headers["x-telegram-bot-api-secret-token"];
     if (!provided) return false;
@@ -111,22 +153,62 @@ export class TelegramAdapter implements MessagingAdapter {
   parseIncomingWebhook(payload: unknown): IncomingMessage | null {
     const body = payload as {
       update_id?: number;
-      message?: { message_id?: number; chat?: { id?: number }; text?: string; date?: number };
+      message?: {
+        message_id?: number;
+        chat?: { id?: number };
+        text?: string;
+        voice?: { file_id?: string; duration?: number; mime_type?: string; file_size?: number };
+        audio?: { file_id?: string; duration?: number; mime_type?: string; file_size?: number };
+        date?: number;
+      };
     };
 
     const msg = body.message;
-    if (!msg || !msg.chat?.id || typeof msg.text !== "string") {
+    if (!msg || !msg.chat?.id) {
       return null;
     }
 
     const updateId = body.update_id ? String(body.update_id) : (msg.message_id ? String(msg.message_id) : undefined);
+    const timestamp = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
 
-    return {
-      platformUserId: String(msg.chat.id),
-      text: msg.text,
-      timestamp: msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString(),
-      updateId,
-    };
+    if (typeof msg.text === "string") {
+      return {
+        platformUserId: String(msg.chat.id),
+        text: msg.text,
+        timestamp,
+        updateId,
+      };
+    }
+
+    if (msg.voice && msg.voice.file_id) {
+      return {
+        platformUserId: String(msg.chat.id),
+        audio: {
+          mediaId: msg.voice.file_id,
+          mimeType: msg.voice.mime_type || "audio/ogg",
+          durationSeconds: msg.voice.duration,
+          fileSizeBytes: msg.voice.file_size,
+        },
+        timestamp,
+        updateId,
+      };
+    }
+
+    if (msg.audio && msg.audio.file_id) {
+      return {
+        platformUserId: String(msg.chat.id),
+        audio: {
+          mediaId: msg.audio.file_id,
+          mimeType: msg.audio.mime_type || "audio/mpeg",
+          durationSeconds: msg.audio.duration,
+          fileSizeBytes: msg.audio.file_size,
+        },
+        timestamp,
+        updateId,
+      };
+    }
+
+    return null;
   }
 
   parseIncomingCallbackQuery(payload: unknown): IncomingCallbackQuery | null {

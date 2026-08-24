@@ -151,3 +151,42 @@ Calculated deterministically in `InsightsService`:
 - **Commitments Completed / Created**: Tracked explicitly.
 - **Conversational Summary**: Natural prose generation without exposing raw metric variable names.
 
+---
+
+## 9. Voice Notes & Multimodal Ingestion Architecture
+
+Voice is treated strictly as an **input modality**, not a separate assistant or bot.
+
+```
+Telegram Voice / WhatsApp Audio
+              ↓
+        Channel Adapter (parseIncomingWebhook)
+              ↓
+    Deduplication (processed_updates)
+              ↓
+       Audio Ingestion Service (Limits & Validation)
+              ↓
+  Provider-Authenticated Download (downloadAudio — SSRF Protected)
+              ↓
+       Transcription Service (Gemini multimodal / GoogleGenAI)
+              ↓
+       Normalized User Text (incoming.text)
+              ↓
+    Existing Conversation Core (ConversationOrchestrator)
+              ↓
+    Intent / Tools / TaskService / FollowUpService / MemoryService
+              ↓
+       Standard Response Pipeline (sendMessage)
+```
+
+### Key Principles
+1. **Zero Duplicate Logic**: Transcribed speech enters `orchestrator.handleMessage` as normalized user text. Tasks, commitments, follow-ups, memories, projects, and multi-turn contexts function identically for voice and text.
+2. **SSRF Prevention**: Downloads use provider-authenticated retrieval exclusively (`api.telegram.org` / `graph.facebook.com` with CDN domain whitelist). Arbitrary user-supplied URLs are never fetched.
+3. **Strict Validation Limits**:
+   - Max duration: 180 seconds (3 minutes)
+   - Max file size: 20 MB
+   - Supported MIME types: `audio/ogg`, `audio/oga`, `audio/opus`, `audio/mp3`, `audio/mpeg`, `audio/wav`, `audio/m4a`, `audio/aac`, `audio/mp4`, `audio/webm`
+   - Timeout: 15,000 ms
+4. **Privacy & Ephemeral Buffering**: Audio buffers are processed purely in-memory and immediately garbage collected upon transcription. No voice audio is stored on disk or in the database.
+
+

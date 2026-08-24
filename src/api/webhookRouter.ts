@@ -4,20 +4,23 @@ import type { MessagingAdapter } from "../adapters/MessagingAdapter";
 import { ConversationOrchestrator } from "../orchestrator/ConversationOrchestrator";
 import { UserService } from "../core/tasks/UserService";
 import { FollowUpService } from "../core/followup/FollowUpService";
+import { AudioIngestionService } from "../core/voice/AudioIngestionService";
+import { GeminiTranscriptionProvider } from "../core/voice/GeminiTranscriptionProvider";
 import { logger } from "../utils/logger";
 
 /**
  * Builds the webhook router for a given adapter. Every request goes
  * through: rate limiting (applied in index.ts) -> raw body capture
  * (needed for signature verification) -> signature check -> parse ->
- * deduplication -> orchestrate -> reply. Any failure at the signature
- * step returns 401 and the payload is never touched by business logic.
+ * deduplication -> audio normalization (if voice) -> orchestrate -> reply.
+ * Any failure at the signature step returns 401.
  */
 export function buildWebhookRouter(
   adapter: MessagingAdapter,
   orchestrator: ConversationOrchestrator,
   userService: UserService,
-  followUpService: FollowUpService = new FollowUpService()
+  followUpService: FollowUpService = new FollowUpService(),
+  audioIngestionService?: AudioIngestionService
 ): Router {
   const router = Router();
 
@@ -114,9 +117,9 @@ export function buildWebhookRouter(
         return;
       }
 
-      // 2. Otherwise parse standard incoming text message
+      // 2. Otherwise parse standard incoming message (text or voice)
       const incoming = adapter.parseIncomingWebhook(req.body);
-      if (!incoming) return; // not a text message we care about (receipt, sticker, etc.)
+      if (!incoming) return; // not a message we care about (receipt, sticker, etc.)
 
       // Check deduplication if updateId is present
       if (incoming.updateId) {
@@ -126,6 +129,40 @@ export function buildWebhookRouter(
           logger.info({ correlationId, updateKey, platform: adapter.platformName }, "Skipping duplicate webhook update");
           return;
         }
+      }
+
+      // 3. Handle voice/audio ingestion if incoming message contains audio
+      if (incoming.audio) {
+        const effectiveAudioService =
+          audioIngestionService ??
+          (process.env.GEMMA_API_KEY
+            ? new AudioIngestionService(new GeminiTranscriptionProvider(process.env.GEMMA_API_KEY))
+            : undefined);
+
+        if (!effectiveAudioService) {
+          logger.warn({ correlationId, platform: adapter.platformName }, "Audio message received but audio ingestion is not configured");
+          await adapter.sendMessage({
+            userId: incoming.platformUserId,
+            text: "Voice message processing is currently unavailable.",
+          });
+          return;
+        }
+
+        const audioResult = await effectiveAudioService.processAudioMessage(adapter, incoming.audio);
+        if (!audioResult.success || !audioResult.transcript) {
+          await adapter.sendMessage({
+            userId: incoming.platformUserId,
+            text: audioResult.userMessage || "I couldn't make out that voice note. Could you try sending it again?",
+          });
+          return;
+        }
+
+        // Normalize transcribed audio directly into incoming text
+        incoming.text = audioResult.transcript;
+      }
+
+      if (!incoming.text) {
+        return;
       }
 
       await adapter.sendTypingIndicator?.(incoming.platformUserId);

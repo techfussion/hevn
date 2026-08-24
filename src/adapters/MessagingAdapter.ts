@@ -1,4 +1,7 @@
 import type { OutboundMessage } from "../types/domain";
+import type { IncomingAudio } from "../core/voice/types";
+
+export type { IncomingAudio };
 
 /**
  * Every messaging platform (Telegram, WhatsApp, ...) implements this
@@ -10,7 +13,8 @@ import type { OutboundMessage } from "../types/domain";
  */
 export interface IncomingMessage {
   platformUserId: string;
-  text: string;
+  text?: string;
+  audio?: IncomingAudio;
   timestamp: string;
   updateId?: string;
 }
@@ -54,6 +58,12 @@ export interface MessagingAdapter {
   answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
 
   /**
+   * Downloads an audio media file securely using provider-authenticated retrieval.
+   * Prevents SSRF by strictly fetching from authorized provider endpoints.
+   */
+  downloadAudio?(mediaId: string): Promise<{ buffer: Buffer; mimeType: string }>;
+
+  /**
    * Verify that an incoming webhook request actually came from the
    * platform (signature/secret check). MUST be called before processing
    * any webhook payload. Throwing/returning false should result in the
@@ -62,9 +72,8 @@ export interface MessagingAdapter {
   verifyWebhookSignature(rawBody: string, headers: Record<string, string | undefined>): boolean;
 
   /**
-   * Parse a raw webhook payload into our normalized IncomingMessage shape.
-   * Returns null for payloads that aren't user text messages we care about
-   * (delivery receipts, typing indicators, etc.) so callers can skip them.
+   * Parse a raw webhook payload into our normalized IncomingMessage shape (text or voice).
+   * Returns null for payloads that aren't user messages we care about (receipts, stickers, etc.).
    */
   parseIncomingWebhook(payload: unknown): IncomingMessage | null;
 

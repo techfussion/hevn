@@ -12,6 +12,9 @@ import { registerAdapter } from "./adapters/registry";
 import { buildWebhookRouter } from "./api/webhookRouter";
 import { webhookRateLimiter } from "./middleware/rateLimiter";
 import { InsightsService } from "./core/insights/InsightsService";
+import { FollowUpService } from "./core/followup/FollowUpService";
+import { AudioIngestionService } from "./core/voice/AudioIngestionService";
+import { GeminiTranscriptionProvider } from "./core/voice/GeminiTranscriptionProvider";
 import { logger } from "./utils/logger";
 
 function requireEnv(name: string): string {
@@ -23,14 +26,20 @@ function requireEnv(name: string): string {
 }
 
 async function main() {
+  const gemmaApiKey = requireEnv("GEMMA_API_KEY");
   const gemma = new GemmaClient(
-    requireEnv("GEMMA_API_KEY"),
+    gemmaApiKey,
     process.env.GEMMA_MODEL ?? "gemma-4-31b-it"
   );
 
   const taskService = new TaskService();
   const insightsService = new InsightsService();
   const userService = new UserService();
+  const followUpService = new FollowUpService();
+  const audioIngestionService = new AudioIngestionService(
+    new GeminiTranscriptionProvider(gemmaApiKey)
+  );
+
   const botName = process.env.BOT_NAME ?? "Hevn";
 
   const orchestrator = new ConversationOrchestrator(gemma, taskService, userService, insightsService);
@@ -51,7 +60,7 @@ async function main() {
   app.use(
     "/webhook/telegram",
     webhookRateLimiter,
-    buildWebhookRouter(telegramAdapter, orchestrator, userService)
+    buildWebhookRouter(telegramAdapter, orchestrator, userService, followUpService, audioIngestionService)
   );
 
   if (
@@ -82,7 +91,7 @@ async function main() {
     app.use(
       "/webhook/whatsapp",
       webhookRateLimiter,
-      buildWebhookRouter(whatsappAdapter, orchestrator, userService)
+      buildWebhookRouter(whatsappAdapter, orchestrator, userService, followUpService, audioIngestionService)
     );
   }
 
@@ -96,4 +105,3 @@ main().catch((err) => {
   logger.error(err, "Fatal startup error");
   process.exit(1);
 });
-

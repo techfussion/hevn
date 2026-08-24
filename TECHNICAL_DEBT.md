@@ -18,7 +18,8 @@ This register documents known architectural and technical debt across the Hevn c
 | ID | Title | Priority | Current Impact | Trigger for Action | Proposed Future Solution |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | **DEBT-01** | **PostgreSQL Minute-Polling Scheduler** | **P2** | Low at current scale (<2ms query latency with partial indexes) | High-volume index/lock contention or active users scaling beyond >100k | Migrate to distributed job queue (e.g., `pg-boss` or `Temporal`) with lease-based locks and idempotent execution |
-| **DEBT-02** | **Voice Message & Audio Ingestion** | **P2** | Low (non-text messages skipped cleanly by adapter parser) | P2 feature milestone for voice note secretary support | Implement async audio download pipeline with Whisper / Gemini Audio transcription |
+| **DEBT-02** | **Voice Message Ingestion** | **RESOLVED** | Resolved in P2.0 — in-memory audio ingestion & transcription pipeline active | N/A (Feature Complete) | Ingests Telegram & WhatsApp voice notes via `AudioIngestionService` and `GeminiTranscriptionProvider` |
+| **DEBT-05** | **Outbound Voice Audio Synthesis (TTS)** | **P2** | Low — secretary replies as high-clarity text chat | User demand for voice-out secretary notes or audio follow-ups | Add `AudioSynthesisService` (ElevenLabs / Google Cloud TTS) behind `ChannelCapabilities.audioOutput` |
 | **DEBT-03** | **Webhook Processed Updates Pruning** | **P3** | Negligible storage growth in `processed_updates` | Table size exceeds 1M rows (~6 months of high traffic) | Add automated 7-day TTL cleanup routine to background worker tick |
 | **DEBT-04** | **Multi-Turn Conversation Turn Truncation** | **P3** | Context capped at 6 turns; older turns retained in database | DB size growth for highly active users | Add rolling turn archive / partition policy |
 
