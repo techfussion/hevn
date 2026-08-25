@@ -59,6 +59,20 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
 * **SSRF & Callback Prevention**: All provider communication is restricted to verified provider endpoints (`api.elevenlabs.io`, `texttospeech.googleapis.com`). Arbitrary user-supplied URLs or endpoints are never contacted.
 * **Deterministic Fail-Safe Fallback**: Any failure in the synthesis or delivery pipeline automatically falls back to standard text messaging without exposing provider stack traces or internal infrastructure details to the end user.
 
+### I. Syllabus Ingestion & Study Mode Security Boundaries (P2.4)
+* **Prompt Injection Defense & Fencing**:
+  * Syllabus text is enclosed in strict `<SYLLABUS_CONTENT>` isolation boundaries in model prompts.
+  * System instructions explicitly forbid syllabus text from overriding instructions, reconfiguring persona/voice, elevating privileges, or creating unapproved tasks/courses.
+* **Denial-of-Service & File Size Limits**:
+  * Syllabus uploads enforce strict pre-ingestion validation: maximum file size of 10MB (`10 * 1024 * 1024` bytes) and maximum page count of 20 pages.
+  * Files exceeding limits are rejected immediately before touching LLM processing.
+* **Multi-Tenant Study Mode Isolation**:
+  * Database tables `courses`, `course_topics`, `assessments`, `study_plans`, `study_sessions`, and `quizzes` enforce PostgreSQL Row-Level Security (`user_id = current_setting('app.current_user_id')`).
+* **Quiz Integrity & Anti-Cheating Isolation**:
+  * Quiz generation creates questions with explanations and answers stored securely in the PostgreSQL database.
+  * Only the active question and options are delivered to the user; future questions and correct answer keys are never sent in conversation responses prior to submission and evaluation.
+  * Topic mastery calculation is deterministic and bounded strictly between 0 and 100 at the application service layer.
+
 ---
 
 ## 3. Vulnerability Reporting

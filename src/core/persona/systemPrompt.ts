@@ -1,4 +1,4 @@
-import type { UserPersona, FollowUp, Task, UserMemory } from "../../types/domain";
+import type { UserPersona, FollowUp, Task, UserMemory, Quiz } from "../../types/domain";
 
 /**
  * Builds the system prompt that defines the bot's persona and behavioral
@@ -17,6 +17,7 @@ export interface PersonaContext {
     task: Task;
   } | null;
   memories?: UserMemory[];
+  activeQuiz?: Quiz | null;
 }
 
 export function buildSystemPrompt(ctx: PersonaContext): string {
@@ -27,9 +28,15 @@ export function buildSystemPrompt(ctx: PersonaContext): string {
   switch (persona) {
     case "student":
       personaContext = `ROLE CONTEXT: Student
-- The user is a student managing academic obligations, assignments, exams, projects, study sessions, and personal life.
-- Key vocabulary: exams, assignments, professors, study sessions, midterms, finals, thesis.
-- Be proactive in helping with preparation milestones and study breakdowns.`;
+- The user is a student managing academic obligations, courses, topics, assignments, exams, study plans, quizzes, and flashcards.
+- Key vocabulary: exams, midterms, finals, revision, study sessions, syllabus, courses, topics, quizzes, flashcards, mastery.
+- Study Mode capabilities:
+  * When student mentions a course ("Add Database Systems"), call create_course.
+  * When student mentions an exam/assessment ("Database exam September 10"), call create_assessment and suggest a structured study plan.
+  * When student asks to create a study plan ("Make a study plan for my exam"), call create_study_plan.
+  * When student asks to quiz on a topic ("Quiz me on SQL", "Quiz me on Normalization"), call generate_quiz. Present questions one at a time and ask the student to answer.
+  * When student asks for flashcards ("Give me flashcards for normalization"), call generate_flashcards.
+  * When student asks what they are weakest at or what to study next ("What should I study next?"), call get_study_recommendation.`;
       break;
     case "executive_assistant":
       personaContext = `ROLE CONTEXT: Executive Assistant
@@ -57,6 +64,16 @@ export function buildSystemPrompt(ctx: PersonaContext): string {
 - If the user says "Cancel" or "Forget it", call respond_followup with intent="cancelled".`;
   }
 
+  let quizContext = "";
+  if (ctx.activeQuiz) {
+    const qIndex = ctx.activeQuiz.currentQuestionIndex;
+    const currentQ = ctx.activeQuiz.questions[qIndex];
+    quizContext = `\nACTIVE QUIZ IN PROGRESS:
+- Quiz ID: ${ctx.activeQuiz.id} (Topic: "${ctx.activeQuiz.title}", Question ${qIndex + 1} of ${ctx.activeQuiz.totalQuestions})
+- Current Question: "${currentQ?.question || "Question in progress"}"
+- If the student's message is an answer to this question, call submit_quiz_answer with quiz_id="${ctx.activeQuiz.id}" and user_answer="<student's answer>".`;
+  }
+
   let memoryContext = "";
   if (ctx.memories && ctx.memories.length > 0) {
     const memoryLines = ctx.memories.map((m) => `• [${m.category}] ${m.content}`).join("\n");
@@ -70,6 +87,7 @@ ${memoryLines}
 
 ${personaContext}
 ${followUpContext}
+${quizContext}
 ${memoryContext}
 PERSONALITY & TONE
 - Sound like a competent, trusted human secretary — brief, warm, calm, intelligent, slightly playful, never robotic or corporate.

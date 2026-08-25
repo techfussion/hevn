@@ -183,6 +183,150 @@ export interface OutboundMessage {
   buttons?: ActionButton[];
 }
 
+export type CourseStatus = "active" | "completed" | "archived";
+
+export interface Course {
+  id: string;
+  userId: string;
+  name: string;
+  code: string | null;
+  description: string | null;
+  instructor: string | null;
+  institution: string | null;
+  semester: string | null;
+  status: CourseStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TopicStatus = "not_started" | "in_progress" | "mastered";
+
+export interface CourseTopic {
+  id: string;
+  courseId: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  ordering: number;
+  estimatedStudyMinutes: number;
+  masteryLevel: number; // 0 to 100
+  status: TopicStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AssessmentType = "exam" | "midterm" | "final" | "quiz" | "assignment" | "project";
+
+export interface Assessment {
+  id: string;
+  courseId: string;
+  userId: string;
+  title: string;
+  assessmentType: AssessmentType;
+  dueAt: string;
+  weightPercentage: number | null;
+  linkedTaskId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type StudyPlanStatus = "active" | "completed" | "archived";
+
+export interface StudyPlan {
+  id: string;
+  userId: string;
+  courseId: string;
+  assessmentId: string | null;
+  title: string;
+  targetDate: string;
+  status: StudyPlanStatus;
+  totalPlannedMinutes: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type StudySessionStatus = "scheduled" | "completed" | "skipped" | "rescheduled";
+
+export interface StudySession {
+  id: string;
+  userId: string;
+  studyPlanId: string;
+  courseId: string;
+  topicId: string | null;
+  taskId: string | null;
+  title: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  plannedMinutes: number;
+  actualMinutes: number | null;
+  status: StudySessionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type QuizDifficulty = "easy" | "medium" | "hard";
+export type QuizStatus = "CREATED" | "ACTIVE" | "ANSWERING" | "COMPLETED" | "REVIEWED";
+
+export interface QuizQuestion {
+  question: string;
+  options?: string[];
+  answer: string;
+  explanation: string;
+  topic?: string;
+  type?: "multiple_choice" | "true_false" | "short_answer";
+}
+
+export interface QuizAnswer {
+  questionIndex: number;
+  userAnswer: string;
+  isCorrect: boolean;
+  feedback: string;
+}
+
+export interface Quiz {
+  id: string;
+  userId: string;
+  courseId: string | null;
+  topicId: string | null;
+  title: string;
+  difficulty: QuizDifficulty;
+  questions: QuizQuestion[];
+  status: QuizStatus;
+  currentQuestionIndex: number;
+  score: number;
+  totalQuestions: number;
+  answers: QuizAnswer[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Flashcard {
+  front: string;
+  back: string;
+  topic: string;
+  difficulty?: QuizDifficulty;
+}
+
+export interface StudyRecommendation {
+  topicId: string;
+  topicTitle: string;
+  courseName: string;
+  currentMastery: number;
+  reason: string;
+  recommendedMinutes: number;
+}
+
+export interface StudyInsights {
+  totalStudyMinutes: number;
+  completedSessions: number;
+  scheduledSessions: number;
+  studyAdherenceRate: number | null;
+  averageQuizAccuracy: number | null;
+  strongestTopics: Array<{ topicTitle: string; masteryLevel: number }>;
+  weakestTopics: Array<{ topicTitle: string; masteryLevel: number }>;
+  upcomingAssessments: Array<{ title: string; courseName: string; dueAt: string }>;
+}
+
 export type {
   CalendarProviderType,
   CalendarAccountStatus,

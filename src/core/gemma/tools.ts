@@ -459,6 +459,197 @@ export const taskTools: FunctionDeclaration[] = [
       required: [],
     },
   },
+  {
+    name: "create_course",
+    description: "Create or register an academic course or subject for the student.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: "Name of the course (e.g. 'Database Systems', 'Linear Algebra')" },
+        code: { type: Type.STRING, description: "Course code (e.g. 'CS301', 'MATH101')" },
+        description: { type: Type.STRING, description: "Optional course description" },
+        instructor: { type: Type.STRING, description: "Optional instructor/professor name" },
+        semester: { type: Type.STRING, description: "Optional semester or term (e.g. 'Fall 2026')" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "list_courses",
+    description: "List the student's active or archived courses.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        status: {
+          type: Type.STRING,
+          enum: ["active", "completed", "archived"],
+          description: "Filter by status (default: 'active')",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "create_course_topic",
+    description: "Add a topic or module to a course.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course_id: { type: Type.STRING, description: "ID of the course" },
+        title: { type: Type.STRING, description: "Title of the topic (e.g. 'Normalization', 'Relational Algebra')" },
+        description: { type: Type.STRING, description: "Optional topic overview" },
+        estimated_study_minutes: { type: Type.NUMBER, description: "Estimated study minutes (default: 60)" },
+      },
+      required: ["course_id", "title"],
+    },
+  },
+  {
+    name: "list_course_topics",
+    description: "List all topics and current mastery levels for a course.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course_id: { type: Type.STRING, description: "ID of the course" },
+      },
+      required: ["course_id"],
+    },
+  },
+  {
+    name: "create_assessment",
+    description: "Create an exam, midterm, final, quiz, or assignment for a course.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course_id: { type: Type.STRING, description: "ID of the course" },
+        title: { type: Type.STRING, description: "Title of the assessment (e.g. 'Database Midterm Exam')" },
+        assessment_type: {
+          type: Type.STRING,
+          enum: ["exam", "midterm", "final", "quiz", "assignment", "project"],
+          description: "Type of assessment",
+        },
+        due_at_iso: { type: Type.STRING, description: "Exam date/time in ISO 8601 format" },
+        weight_percentage: { type: Type.NUMBER, description: "Optional percentage weight of course grade" },
+      },
+      required: ["course_id", "title", "due_at_iso"],
+    },
+  },
+  {
+    name: "list_assessments",
+    description: "List upcoming exams, midterms, and assessments.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course_id: { type: Type.STRING, description: "Optional course ID filter" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "create_study_plan",
+    description:
+      "Generate a structured, calendar-aware study plan with concrete sessions before an exam or deadline.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        course_id: { type: Type.STRING, description: "ID of the course" },
+        assessment_id: { type: Type.STRING, description: "Optional assessment ID" },
+        target_date_iso: { type: Type.STRING, description: "Exam/target date in ISO 8601 format" },
+        session_duration_minutes: { type: Type.NUMBER, description: "Target session duration in minutes (default 60)" },
+      },
+      required: ["course_id", "target_date_iso"],
+    },
+  },
+  {
+    name: "get_study_plan",
+    description: "Retrieve a study plan and its scheduled sessions.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        study_plan_id: { type: Type.STRING, description: "ID of the study plan" },
+      },
+      required: ["study_plan_id"],
+    },
+  },
+  {
+    name: "reschedule_study_session",
+    description: "Move a study session to a new date/time.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        session_id: { type: Type.STRING, description: "ID of the study session" },
+        new_start_iso: { type: Type.STRING, description: "New start time in ISO 8601 format" },
+        duration_minutes: { type: Type.NUMBER, description: "Optional duration in minutes" },
+      },
+      required: ["session_id", "new_start_iso"],
+    },
+  },
+  {
+    name: "generate_quiz",
+    description: "Generate an interactive quiz on a course topic.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        topic_title: { type: Type.STRING, description: "Topic to quiz on (e.g. 'Normalization', 'SQL')" },
+        course_id: { type: Type.STRING, description: "Optional course ID" },
+        topic_id: { type: Type.STRING, description: "Optional topic ID" },
+        difficulty: { type: Type.STRING, enum: ["easy", "medium", "hard"], description: "Difficulty level" },
+        question_count: { type: Type.NUMBER, description: "Number of questions (default: 5)" },
+      },
+      required: ["topic_title"],
+    },
+  },
+  {
+    name: "submit_quiz_answer",
+    description: "Submit an answer to the current question in an active quiz.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        quiz_id: { type: Type.STRING, description: "ID of the active quiz" },
+        user_answer: { type: Type.STRING, description: "User's submitted answer" },
+      },
+      required: ["quiz_id", "user_answer"],
+    },
+  },
+  {
+    name: "get_active_quiz",
+    description: "Check if the user currently has an ongoing active quiz.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "generate_flashcards",
+    description: "Generate a deck of study flashcards for quick revision.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        topic: { type: Type.STRING, description: "Topic for flashcards (e.g. 'Relational Algebra', '3NF')" },
+        difficulty: { type: Type.STRING, enum: ["easy", "medium", "hard"] },
+        card_count: { type: Type.NUMBER, description: "Number of cards (default: 5)" },
+      },
+      required: ["topic"],
+    },
+  },
+  {
+    name: "get_study_recommendation",
+    description: "Get personalized, adaptive study recommendations based on topic mastery and upcoming exams.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_study_insights",
+    description: "Get study analytics: hours studied, session completion rate, quiz accuracy, strong and weak topics.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 

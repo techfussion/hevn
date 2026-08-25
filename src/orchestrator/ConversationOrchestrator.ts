@@ -12,6 +12,9 @@ import type {
   UserMemory,
   FollowUp,
   Task,
+  CourseStatus,
+  AssessmentType,
+  QuizDifficulty,
 } from "../types/domain";
 import { InsightsService } from "../core/insights/InsightsService";
 import { UserService } from "../core/tasks/UserService";
@@ -21,6 +24,12 @@ import { RecurringTaskService } from "../core/recurring/RecurringTaskService";
 import { MemoryService } from "../core/memory/MemoryService";
 import { ProjectService } from "../core/projects/ProjectService";
 import { CalendarService } from "../core/calendar/CalendarService";
+import { CourseService } from "../core/study/CourseService";
+import { StudyPlanService } from "../core/study/StudyPlanService";
+import { QuizService } from "../core/study/QuizService";
+import { FlashcardService } from "../core/study/FlashcardService";
+import { StudyRecommendationService } from "../core/study/StudyRecommendationService";
+import { SyllabusIngestionService } from "../core/study/SyllabusIngestionService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
@@ -32,6 +41,12 @@ export class ConversationOrchestrator {
   private memoryService: MemoryService;
   private projectService: ProjectService;
   private calendarService: CalendarService;
+  private courseService: CourseService;
+  private studyPlanService: StudyPlanService;
+  private quizService: QuizService;
+  private flashcardService: FlashcardService;
+  private studyRecommendationService: StudyRecommendationService;
+  private syllabusIngestionService: SyllabusIngestionService;
 
   constructor(
     private gemma: GemmaClient,
@@ -42,7 +57,13 @@ export class ConversationOrchestrator {
     recurringService?: RecurringTaskService,
     memoryService?: MemoryService,
     projectService?: ProjectService,
-    calendarService?: CalendarService
+    calendarService?: CalendarService,
+    courseService?: CourseService,
+    studyPlanService?: StudyPlanService,
+    quizService?: QuizService,
+    flashcardService?: FlashcardService,
+    studyRecommendationService?: StudyRecommendationService,
+    syllabusIngestionService?: SyllabusIngestionService
   ) {
     this.onboardingService = new OnboardingService(this.userService, this.taskService);
     this.followUpService = followUpService || new FollowUpService();
@@ -50,6 +71,19 @@ export class ConversationOrchestrator {
     this.memoryService = memoryService || new MemoryService();
     this.projectService = projectService || new ProjectService();
     this.calendarService = calendarService || new CalendarService();
+    this.courseService = courseService || new CourseService(this.taskService);
+    this.studyPlanService =
+      studyPlanService || new StudyPlanService(this.courseService, this.taskService, this.calendarService);
+    this.quizService = quizService || new QuizService(this.gemma, this.courseService);
+    this.flashcardService = flashcardService || new FlashcardService(this.gemma);
+    this.studyRecommendationService =
+      studyRecommendationService || new StudyRecommendationService(this.courseService);
+    this.syllabusIngestionService =
+      syllabusIngestionService || new SyllabusIngestionService(this.gemma, this.courseService);
+  }
+
+  getSyllabusIngestionService(): SyllabusIngestionService {
+    return this.syllabusIngestionService;
   }
 
   /**
@@ -134,6 +168,15 @@ export class ConversationOrchestrator {
       logger.debug({ err, userId: user.id }, "Could not fetch user memories");
     }
 
+    let activeQuiz = null;
+    if (user.persona === "student" && this.quizService) {
+      try {
+        activeQuiz = await this.quizService.getActiveQuiz(user.id);
+      } catch (err) {
+        logger.debug({ err, userId: user.id }, "Could not fetch active quiz context");
+      }
+    }
+
     const systemPrompt = buildSystemPrompt({
       botName: user.assistantName || user.botPersona || "Hevn",
       studentName: user.displayName,
@@ -143,6 +186,7 @@ export class ConversationOrchestrator {
       isOnboarded: true,
       activeFollowUp,
       memories,
+      activeQuiz,
     });
 
     const MAX_TOOL_ROUNDS = 3; // hard cap — prevents a runaway tool-calling loop from burning quota/cost
@@ -554,6 +598,184 @@ export class ConversationOrchestrator {
           return {
             summary: desc,
             data: { success: true, responseMode, voiceEnabled, voiceName },
+          };
+        }
+
+        case "create_course": {
+          const course = await this.courseService.createCourse(userId, {
+            name: String(call.args.name),
+            code: call.args.code as string | undefined,
+            description: call.args.description as string | undefined,
+            instructor: call.args.instructor as string | undefined,
+            semester: call.args.semester as string | undefined,
+          });
+          return {
+            summary: `Added course "${course.name}"${course.code ? ` (${course.code})` : ""}.`,
+            data: { success: true, course },
+          };
+        }
+
+        case "list_courses": {
+          const courses = await this.courseService.listCourses(
+            userId,
+            call.args.status as CourseStatus | undefined
+          );
+          return {
+            summary: `Found ${courses.length} course${courses.length === 1 ? "" : "s"}.`,
+            data: { success: true, courses },
+          };
+        }
+
+        case "create_course_topic": {
+          const topic = await this.courseService.createTopic(userId, {
+            courseId: String(call.args.course_id),
+            title: String(call.args.title),
+            description: call.args.description as string | undefined,
+            estimatedStudyMinutes: call.args.estimated_study_minutes ? Number(call.args.estimated_study_minutes) : undefined,
+          });
+          return {
+            summary: `Added topic "${topic.title}".`,
+            data: { success: true, topic },
+          };
+        }
+
+        case "list_course_topics": {
+          const topics = await this.courseService.listTopics(userId, String(call.args.course_id));
+          return {
+            summary: `Found ${topics.length} topic${topics.length === 1 ? "" : "s"}.`,
+            data: { success: true, topics },
+          };
+        }
+
+        case "create_assessment": {
+          const assessment = await this.courseService.createAssessment(userId, {
+            courseId: String(call.args.course_id),
+            title: String(call.args.title),
+            assessmentType: (call.args.assessment_type as AssessmentType) || "exam",
+            dueAt: String(call.args.due_at_iso),
+            weightPercentage: call.args.weight_percentage ? Number(call.args.weight_percentage) : undefined,
+          });
+          return {
+            summary: `Scheduled assessment "${assessment.title}" for ${new Date(assessment.dueAt).toLocaleString()}.`,
+            data: { success: true, assessment },
+          };
+        }
+
+        case "list_assessments": {
+          const assessments = await this.courseService.listAssessments(
+            userId,
+            call.args.course_id ? String(call.args.course_id) : undefined
+          );
+          return {
+            summary: `Found ${assessments.length} assessment${assessments.length === 1 ? "" : "s"}.`,
+            data: { success: true, assessments },
+          };
+        }
+
+        case "create_study_plan": {
+          const result = await this.studyPlanService.generateStudyPlan(userId, {
+            courseId: String(call.args.course_id),
+            assessmentId: call.args.assessment_id ? String(call.args.assessment_id) : undefined,
+            targetDate: String(call.args.target_date_iso),
+            sessionDurationMinutes: call.args.session_duration_minutes ? Number(call.args.session_duration_minutes) : undefined,
+            userTimezone,
+          });
+          return {
+            summary: result.message || (result.success ? "Study plan created." : "Could not create study plan."),
+            data: { ...result },
+          };
+        }
+
+        case "get_study_plan": {
+          const plan = await this.studyPlanService.getStudyPlan(userId, String(call.args.study_plan_id));
+          const sessions = plan ? await this.studyPlanService.listStudySessions(userId, plan.id) : [];
+          return plan
+            ? { summary: `Study Plan: ${plan.title} (${sessions.length} sessions).`, data: { success: true, plan, sessions } }
+            : { summary: "Study plan not found.", data: { success: false, error: "plan_not_found" } };
+        }
+
+        case "reschedule_study_session": {
+          const session = await this.studyPlanService.rescheduleStudySession(
+            userId,
+            String(call.args.session_id),
+            String(call.args.new_start_iso),
+            call.args.duration_minutes ? Number(call.args.duration_minutes) : undefined
+          );
+          return session
+            ? { summary: `Rescheduled study session to ${new Date(session.scheduledStart).toLocaleString()}.`, data: { success: true, session } }
+            : { summary: "Could not find study session.", data: { success: false, error: "session_not_found" } };
+        }
+
+        case "generate_quiz": {
+          const quiz = await this.quizService.generateQuiz(userId, {
+            topicTitle: String(call.args.topic_title),
+            courseId: call.args.course_id ? String(call.args.course_id) : undefined,
+            topicId: call.args.topic_id ? String(call.args.topic_id) : undefined,
+            difficulty: call.args.difficulty as QuizDifficulty | undefined,
+            questionCount: call.args.question_count ? Number(call.args.question_count) : undefined,
+          });
+          const firstQ = quiz.questions[0];
+          return {
+            summary: `Generated quiz on ${quiz.title}. Question 1/${quiz.totalQuestions}: ${firstQ?.question || ""}`,
+            data: { success: true, quiz, currentQuestion: firstQ },
+          };
+        }
+
+        case "submit_quiz_answer": {
+          const result = await this.quizService.submitAnswer(
+            userId,
+            String(call.args.quiz_id),
+            String(call.args.user_answer)
+          );
+          const feedback = result.lastAnswerFeedback?.isCorrect
+            ? `Correct! ${result.lastAnswerFeedback.explanation}`
+            : `Not quite. The correct answer was "${result.lastAnswerFeedback?.expectedAnswer}". ${result.lastAnswerFeedback?.explanation || ""}`;
+
+          return {
+            summary: result.isFinished
+              ? `Quiz complete! Score: ${result.finalScore?.score}/${result.finalScore?.total} (${result.finalScore?.percentage}%). ${result.finalScore?.recommendation || ""}`
+              : `${feedback} Next Question (${result.questionIndex + 1}/${result.totalQuestions}): ${result.currentQuestion?.question || ""}`,
+            data: { success: true, ...result },
+          };
+        }
+
+        case "get_active_quiz": {
+          const activeQuiz = await this.quizService.getActiveQuiz(userId);
+          return activeQuiz
+            ? {
+                summary: `Active quiz: ${activeQuiz.title} (Question ${activeQuiz.currentQuestionIndex + 1} of ${activeQuiz.totalQuestions}).`,
+                data: { success: true, activeQuiz },
+              }
+            : { summary: "No active quiz in progress.", data: { success: false, activeQuiz: null } };
+        }
+
+        case "generate_flashcards": {
+          const cards = await this.flashcardService.generateFlashcards({
+            topic: String(call.args.topic),
+            difficulty: call.args.difficulty as QuizDifficulty | undefined,
+            cardCount: call.args.card_count ? Number(call.args.card_count) : undefined,
+          });
+          return {
+            summary: `Generated ${cards.length} flashcards for ${call.args.topic}.`,
+            data: { success: true, flashcards: cards },
+          };
+        }
+
+        case "get_study_recommendation": {
+          const recommendations = await this.studyRecommendationService.getStudyRecommendations(userId);
+          return {
+            summary: recommendations.length > 0
+              ? `Found ${recommendations.length} recommended topic${recommendations.length === 1 ? "" : "s"} to review.`
+              : "All topics are currently on track!",
+            data: { success: true, recommendations },
+          };
+        }
+
+        case "get_study_insights": {
+          const insights = await this.insightsService.getStudyInsights(userId, userTimezone);
+          return {
+            summary: `Completed ${insights.completedSessions} of ${insights.scheduledSessions} study sessions (${insights.totalStudyMinutes} total minutes).`,
+            data: { success: true, insights },
           };
         }
 

@@ -323,6 +323,63 @@ Audio Synthesis (AudioSynthesisService)                 Direct Text Delivery
    - Tracks metrics: `voiceSynthesisRequests`, `voiceSynthesisSuccesses`, `voiceSynthesisFailures`, `voiceDeliverySuccesses`, `voiceDeliveryFailures`, `voiceTextFallbacks`, `averageSynthesisLatency`, `synthesisTimeoutCount`.
    - Zero sensitive tokens or raw audio logged.
 
+---
+
+## 12. Advanced Student Study Mode Architecture (P2.4)
+
+P2.4 introduces the first-class academic study subsystem directly integrated into Hevn's secretary orchestrator without duplicating conversational state, tasks, or calendars.
+
+```
+Student Inbound Message (Text / Voice / Syllabus Document)
+                        ↓
+            Conversation Orchestrator
+                        ↓
+┌───────────────────────┴───────────────────────┐
+↓                                               ↓
+Academic Syllabus Ingestion & Parsing      Active Study Tools Execution
+├── <SYLLABUS_CONTENT> Fencing Boundary         ├── CourseService (Courses, Topics, Assessments)
+├── PDF & Text Size / Page Limiting             ├── StudyPlanService (Calendar-aware session slots)
+└── Structured Course / Topic / Exam Extraction ├── QuizService (Multi-Turn State Machine)
+                                                ├── FlashcardService (High-Yield Active Recall)
+                                                └── StudyRecommendationService & InsightsService
+                                                        ↓
+                                         Canonical Hevn Core Entities
+                                         ├── Tasks (Due dates, 15m/24h reminder offsets)
+                                         ├── CalendarAvailability (findAvailableSlots)
+                                         └── PostgreSQL Database (RLS per tenant)
+```
+
+### Core Architecture Components
+
+1. **Zero Architecture Duplication**:
+   - Study Mode is NOT a separate chatbot or second conversation engine.
+   - Study sessions and assessment milestones create canonical Hevn `tasks` with `taskType: 'commitment'` or `taskType: 'task'` and standard reminder offsets (1440m for exams, 15m for study sessions).
+   - Time slot discovery uses existing `CalendarService.findAvailableSlots()`.
+
+2. **Syllabus Ingestion Security (`SyllabusIngestionService`)**:
+   - Fences syllabus content inside `<SYLLABUS_CONTENT>` tags in LLM prompts.
+   - Enforces strict input validation: 10MB maximum file size, 20 maximum page count.
+   - Gracefully handles unstructured text and PDF buffers into structured course models.
+
+3. **Deterministic Multi-Turn Quiz State Machine (`QuizService`)**:
+   - PostgreSQL-backed state lifecycle: `CREATED -> ACTIVE -> ANSWERING -> COMPLETED -> REVIEWED`.
+   - Questions and explanations are generated and stored securely in the database.
+   - Sequentially serves active questions one at a time, evaluates user responses, explains rationales, and adjusts topic mastery levels (0–100 bounded).
+
+4. **Calendar-Aware Study Planner (`StudyPlanService`)**:
+   - Distributes course topic study workloads across available calendar gaps prior to target exam dates.
+   - Provides clear explanations when available calendar time is insufficient.
+   - Automatically provisions reminder-enabled tasks and supports dynamic session rescheduling.
+
+5. **Active Recall Flashcards (`FlashcardService`)**:
+   - Generates structured, high-yield flashcard decks tailored to topic concepts.
+   - Implements `formatDeckForChat` for clean mobile conversational presentation with fallback safety.
+
+6. **Academic Insights & Adaptive Recommendations (`InsightsService` & `StudyRecommendationService`)**:
+   - Evaluates study session adherence rate, quiz accuracy %, and weakest/strongest topics adhering to the null/empty-data philosophy.
+   - Generates prioritized topic recommendations weighted by upcoming assessment urgency and mastery deficit.
+
+
 
 
 

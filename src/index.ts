@@ -20,6 +20,12 @@ import { ResponsePolicyService } from "./core/voice/ResponsePolicyService";
 import { ElevenLabsSynthesisProvider } from "./core/voice/providers/ElevenLabsSynthesisProvider";
 import { GoogleCloudTtsProvider } from "./core/voice/providers/GoogleCloudTtsProvider";
 import { CalendarService } from "./core/calendar/CalendarService";
+import { CourseService } from "./core/study/CourseService";
+import { StudyPlanService } from "./core/study/StudyPlanService";
+import { QuizService } from "./core/study/QuizService";
+import { FlashcardService } from "./core/study/FlashcardService";
+import { StudyRecommendationService } from "./core/study/StudyRecommendationService";
+import { SyllabusIngestionService } from "./core/study/SyllabusIngestionService";
 import { createCalendarOAuthRouter } from "./api/calendarOAuthRouter";
 import { logger } from "./utils/logger";
 
@@ -39,10 +45,17 @@ async function main() {
   );
 
   const taskService = new TaskService();
-  const insightsService = new InsightsService();
   const userService = new UserService();
+  const insightsService = new InsightsService();
   const followUpService = new FollowUpService();
   const calendarService = new CalendarService();
+  const courseService = new CourseService(taskService);
+  const studyPlanService = new StudyPlanService(courseService, taskService, calendarService);
+  const quizService = new QuizService(gemma, courseService);
+  const flashcardService = new FlashcardService(gemma);
+  const studyRecommendationService = new StudyRecommendationService(courseService);
+  const syllabusIngestionService = new SyllabusIngestionService(gemma, courseService);
+
   const audioIngestionService = new AudioIngestionService(
     new GeminiTranscriptionProvider(gemmaApiKey)
   );
@@ -65,7 +78,13 @@ async function main() {
     undefined,
     undefined,
     undefined,
-    calendarService
+    calendarService,
+    courseService,
+    studyPlanService,
+    quizService,
+    flashcardService,
+    studyRecommendationService,
+    syllabusIngestionService
   );
 
   const telegramAdapter = new TelegramAdapter(

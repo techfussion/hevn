@@ -1,4 +1,11 @@
+import type { PoolClient } from "pg";
 import { withUserScope } from "../../db/pool";
+import type { StudyInsights } from "../../types/domain";
+
+type DbScope = <T>(
+  userId: string,
+  fn: (client: PoolClient) => Promise<T>
+) => Promise<T>;
 
 /**
  * Productivity & Follow-Through Insights.
@@ -24,8 +31,105 @@ export interface FollowThroughMetrics {
 }
 
 export class InsightsService {
+  private dbScope: DbScope;
+
+  constructor(dbScope?: DbScope) {
+    this.dbScope = dbScope || withUserScope;
+  }
+
+  async getStudyInsights(userId: string, _timezone?: string): Promise<StudyInsights> {
+    return this.dbScope(userId, async (client) => {
+      // 1. Study Sessions in the last 30 days
+      const { rows: sessionRows } = await client.query(
+        `SELECT id, status, planned_minutes, actual_minutes, scheduled_start
+         FROM study_sessions
+         WHERE user_id = $1 AND created_at >= now() - interval '30 days'`,
+        [userId]
+      );
+
+      const scheduledSessions = sessionRows.length;
+      const completedSessions = sessionRows.filter((s) => s.status === "completed").length;
+      let totalStudyMinutes = 0;
+      for (const s of sessionRows) {
+        if (s.status === "completed") {
+          totalStudyMinutes += Number(s.actual_minutes) || Number(s.planned_minutes) || 0;
+        }
+      }
+
+      const studyAdherenceRate =
+        scheduledSessions > 0
+          ? Math.round((completedSessions / scheduledSessions) * 100)
+          : null;
+
+      // 2. Completed Quizzes in last 30 days
+      const { rows: quizRows } = await client.query(
+        `SELECT score, total_questions
+         FROM quizzes
+         WHERE user_id = $1 AND status IN ('COMPLETED', 'REVIEWED') AND total_questions > 0`,
+        [userId]
+      );
+
+      let totalScore = 0;
+      let totalQuestions = 0;
+      for (const q of quizRows) {
+        totalScore += Number(q.score) || 0;
+        totalQuestions += Number(q.total_questions) || 0;
+      }
+      const averageQuizAccuracy =
+        totalQuestions > 0 ? Math.round((totalScore / totalQuestions) * 100) : null;
+
+      // 3. Topics (strongest vs weakest)
+      const { rows: topicRows } = await client.query(
+        `SELECT title, mastery_level
+         FROM course_topics
+         WHERE user_id = $1
+         ORDER BY mastery_level DESC`,
+        [userId]
+      );
+
+      const strongestTopics = topicRows
+        .filter((t) => Number(t.mastery_level) >= 70)
+        .slice(0, 3)
+        .map((t) => ({ topicTitle: t.title, masteryLevel: Number(t.mastery_level) }));
+
+      const weakestTopics = topicRows
+        .filter((t) => Number(t.mastery_level) < 70)
+        .reverse()
+        .slice(0, 3)
+        .map((t) => ({ topicTitle: t.title, masteryLevel: Number(t.mastery_level) }));
+
+      // 4. Upcoming assessments in next 30 days
+      const { rows: examRows } = await client.query(
+        `SELECT a.title, a.due_at, c.name AS course_name
+         FROM assessments a
+         JOIN courses c ON c.id = a.course_id
+         WHERE a.user_id = $1 AND a.due_at >= now()
+         ORDER BY a.due_at ASC
+         LIMIT 5`,
+        [userId]
+      );
+
+      const upcomingAssessments = examRows.map((e) => ({
+        title: e.title,
+        courseName: e.course_name,
+        dueAt: new Date(e.due_at).toISOString(),
+      }));
+
+      return {
+        totalStudyMinutes,
+        completedSessions,
+        scheduledSessions,
+        studyAdherenceRate,
+        averageQuizAccuracy,
+        strongestTopics,
+        weakestTopics,
+        upcomingAssessments,
+      };
+    });
+  }
+
   async getWeeklyReport(userId: string, timezone: string): Promise<FollowThroughMetrics> {
-    return withUserScope(userId, async (client) => {
+    return this.dbScope(userId, async (client) => {
       // 1. Tasks & Commitments Created in last 7 days
       const { rows: createdRows } = await client.query(
         `SELECT id, task_type FROM tasks
