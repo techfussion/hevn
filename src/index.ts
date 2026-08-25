@@ -15,6 +15,8 @@ import { InsightsService } from "./core/insights/InsightsService";
 import { FollowUpService } from "./core/followup/FollowUpService";
 import { AudioIngestionService } from "./core/voice/AudioIngestionService";
 import { GeminiTranscriptionProvider } from "./core/voice/GeminiTranscriptionProvider";
+import { CalendarService } from "./core/calendar/CalendarService";
+import { createCalendarOAuthRouter } from "./api/calendarOAuthRouter";
 import { logger } from "./utils/logger";
 
 function requireEnv(name: string): string {
@@ -36,13 +38,24 @@ async function main() {
   const insightsService = new InsightsService();
   const userService = new UserService();
   const followUpService = new FollowUpService();
+  const calendarService = new CalendarService();
   const audioIngestionService = new AudioIngestionService(
     new GeminiTranscriptionProvider(gemmaApiKey)
   );
 
   const botName = process.env.BOT_NAME ?? "Hevn";
 
-  const orchestrator = new ConversationOrchestrator(gemma, taskService, userService, insightsService);
+  const orchestrator = new ConversationOrchestrator(
+    gemma,
+    taskService,
+    userService,
+    insightsService,
+    followUpService,
+    undefined,
+    undefined,
+    undefined,
+    calendarService
+  );
 
   const telegramAdapter = new TelegramAdapter(
     requireEnv("TELEGRAM_BOT_TOKEN"),
@@ -57,11 +70,14 @@ async function main() {
 
   app.get("/health", (_req, res) => res.status(200).json({ status: "ok", bot: botName }));
 
+  app.use("/auth", createCalendarOAuthRouter(calendarService));
+
   app.use(
     "/webhook/telegram",
     webhookRateLimiter,
     buildWebhookRouter(telegramAdapter, orchestrator, userService, followUpService, audioIngestionService)
   );
+
 
   if (
     process.env.WHATSAPP_ACCESS_TOKEN &&

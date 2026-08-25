@@ -39,9 +39,19 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
 * **Audio Size & Duration Limits**: Hardcoded validation limits (max 180s duration, max 20MB size, supported MIME types only) prevent resource exhaustion and denial-of-service.
 * **Privacy & Ephemeral Audio Handling**: Audio binaries are processed in-memory as ephemeral buffers, transcribed, and immediately garbage collected. No raw audio files are stored on disk or in the database.
 
+### G. Calendar OAuth Security & Credential Protection (P2.1 & P2.2)
+* **Authenticated Encryption at Rest**: OAuth access tokens, refresh tokens, and CalDAV credentials are encrypted using AES-256-GCM (`src/utils/crypto.ts`). Each encryption operation generates a cryptographically secure 12-byte IV and a 16-byte authentication tag (`ivHex:tagHex:cipherHex`). Any ciphertext tampering fails decryption instantly.
+* **Signed OAuth State & Expiry**: OAuth connection flows use HMAC-SHA256 signed state parameters (`userId.timestamp.signature`). States older than 10 minutes (600,000 ms) or with invalid signatures are rejected to prevent CSRF and authorization code interception.
+* **Secret Redaction & Safe Observability**: Access tokens, refresh tokens, client secrets, and authorization codes are strictly redacted from logs, traces, error messages, and API responses using deep Pino redaction paths and `sanitizeStringForLogging`.
+* **Zero-Auto-Task Guardrail**: External calendar events remain contextual reference data and never create tasks silently in the user's database.
+* **Connection Lifecycle Isolation**: Broken or revoked credentials immediately transition to `reauth_required`. Broken connections are skipped during background polling, preventing repeated hammering or credential exposure.
+* **External Calendar Untrusted Boundary**: Titles, descriptions, and location fields fetched from external calendars are treated as untrusted third-party inputs. The AI system prompt fences external calendar data and instructs the model to disregard injected commands contained within event summaries.
+* **Multi-Tenant Calendar Isolation**: Database tables `calendar_accounts`, `connected_calendars`, and `calendar_event_links` enforce PostgreSQL Row-Level Security (`user_id = current_setting('app.current_user_id')`) ensuring absolute tenant isolation.
+
 ---
 
 ## 3. Vulnerability Reporting
 
 If you identify any security issue, do not commit sensitive keys or logs to version control. Report findings to the security team or create a private security advisory.
+
 

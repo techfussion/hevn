@@ -8,6 +8,7 @@
 4. **Channel Agnosticism**: All platform messaging should flow through `MessagingAdapter` and `src/adapters/registry.ts`. Do not import Telegram or WhatsApp SDKs directly into core services.
 5. **Observability First**: Use `src/utils/logger.ts` for structured JSON logging. Never use raw `console.log` or `console.error` in production code.
 6. **Voice as Input Modality**: Voice notes are an input modality, not a separate assistant. Incoming voice notes are downloaded via provider-authenticated APIs, transcribed into normalized user text via `AudioIngestionService`, and passed directly into `ConversationOrchestrator.handleMessage`. Do not duplicate business logic for voice.
+7. **Calendar Integration as Core Capability**: External calendars provide schedule context to Hevn Core. Never automatically turn calendar events into Hevn tasks (Zero-Auto-Task Guardrail). All OAuth tokens and CalDAV credentials must be encrypted at rest using AES-256-GCM via `src/utils/crypto.ts`.
 
 ---
 
@@ -34,7 +35,8 @@ npm run build
 ## 3. Directory Layout
 
 * `src/adapters/` — Platform messaging adapters (Telegram, WhatsApp) and dynamic registry
-* `src/api/` — Express webhooks with signature verification, deduplication, and audio routing
+* `src/api/` — Express webhooks with signature verification, deduplication, audio routing, and OAuth callbacks
+* `src/core/calendar/` — Calendar domain services, providers (Google API v3, CalDAV RFC 4791), sync logic, and availability engine
 * `src/core/gemma/` — Google GenAI Gemma client and tool declarations
 * `src/core/followup/` — Follow-up engine, status progression, and quiet hours calculations
 * `src/core/insights/` — 7-day productivity metrics, follow-through analytics, and prose generation
@@ -44,10 +46,11 @@ npm run build
 * `src/core/recurring/` — Generalized recurring tasks engine and schedule calculations
 * `src/core/tasks/` — Task and user persistence logic with Zod validation
 * `src/core/voice/` — Audio ingestion service, limits validation, and Gemini multimodal transcription
-* `src/db/` — Database pool, transaction wrappers, and schema DDL
+* `src/db/` — Database pool, transaction wrappers, schema DDL, and migrations
 * `src/middleware/` — Rate limiting and security middleware
 * `src/orchestrator/` — Core conversation loop, multi-round tool calling, and reply extraction
-* `src/scheduler/` — Background cron workers for reminders, follow-ups, and localized check-ins
-* `src/utils/` — Centralized structured logger
-* `__tests__/` — Automated unit, integration, and security test suite
+* `src/scheduler/` — Background cron workers for reminders, follow-ups, calendar sync, and localized check-ins
+* `src/utils/` — Centralized structured logger with redaction, HTTP resilience retry client, and AES-256-GCM / HMAC crypto utilities
+* `__tests__/` — Automated unit, integration, resilience, and security test suite (118 tests across 23 suites)
+
 

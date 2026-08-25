@@ -20,6 +20,7 @@ import { FollowUpService } from "../core/followup/FollowUpService";
 import { RecurringTaskService } from "../core/recurring/RecurringTaskService";
 import { MemoryService } from "../core/memory/MemoryService";
 import { ProjectService } from "../core/projects/ProjectService";
+import { CalendarService } from "../core/calendar/CalendarService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
@@ -30,6 +31,7 @@ export class ConversationOrchestrator {
   private recurringService: RecurringTaskService;
   private memoryService: MemoryService;
   private projectService: ProjectService;
+  private calendarService: CalendarService;
 
   constructor(
     private gemma: GemmaClient,
@@ -39,13 +41,15 @@ export class ConversationOrchestrator {
     followUpService?: FollowUpService,
     recurringService?: RecurringTaskService,
     memoryService?: MemoryService,
-    projectService?: ProjectService
+    projectService?: ProjectService,
+    calendarService?: CalendarService
   ) {
     this.onboardingService = new OnboardingService(this.userService, this.taskService);
     this.followUpService = followUpService || new FollowUpService();
     this.recurringService = recurringService || new RecurringTaskService();
     this.memoryService = memoryService || new MemoryService();
     this.projectService = projectService || new ProjectService();
+    this.calendarService = calendarService || new CalendarService();
   }
 
   /**
@@ -196,6 +200,14 @@ export class ConversationOrchestrator {
             projectId: call.args.project_id ?? null,
             reminderOffsetMinutes: call.args.reminder_offset_minutes ?? null,
           });
+
+          // If this is a commitment, sync to connected external calendar if available
+          if (task.taskType === "commitment") {
+            this.calendarService.syncCommitmentToCalendar(userId, task).catch((err) => {
+              logger.warn({ err, taskId: task.id }, "Background commitment calendar sync failed");
+            });
+          }
+
           return {
             summary: `Added "${task.title}" for ${new Date(task.dueAt).toLocaleString()}.`,
             data: { success: true, task },
@@ -437,10 +449,99 @@ export class ConversationOrchestrator {
           };
         }
 
+        case "list_calendar_events": {
+          const events = await this.calendarService.listUpcomingEvents(
+            userId,
+            String(call.args.time_min_iso),
+            String(call.args.time_max_iso),
+            Number(call.args.limit || 10)
+          );
+          return {
+            summary:
+              events.length === 0
+                ? "No calendar events found for that period."
+                : events
+                    .map(
+                      (e) =>
+                        `• ${e.title} (${new Date(e.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} - ${new Date(e.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`
+                    )
+                    .join("\n"),
+            data: { events },
+          };
+        }
+
+        case "check_calendar_availability": {
+          const availability = await this.calendarService.checkAvailability(
+            userId,
+            String(call.args.time_min_iso),
+            String(call.args.time_max_iso),
+            Number(call.args.duration_minutes || 30)
+          );
+          const summary = availability.isFree
+            ? "You are completely free during that time!"
+            : availability.freeSlots.length > 0
+            ? `You have ${availability.freeSlots.length} available window(s). Free: ` +
+              availability.freeSlots
+                .map(
+                  (s) =>
+                    `${new Date(s.startAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${new Date(s.endAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                )
+                .join(", ")
+            : "You are busy during that entire period.";
+          return {
+            summary,
+            data: { availability },
+          };
+        }
+
+        case "create_calendar_event": {
+          const event = await this.calendarService.createCalendarEvent(userId, {
+            title: String(call.args.title),
+            startAt: String(call.args.start_at_iso),
+            endAt: String(call.args.end_at_iso),
+            description: call.args.description ? String(call.args.description) : undefined,
+            calendarId: call.args.calendar_id ? String(call.args.calendar_id) : undefined,
+          });
+          return {
+            summary: `Scheduled "${event.title}" on your calendar for ${new Date(event.startAt).toLocaleString()}.`,
+            data: { success: true, event },
+          };
+        }
+
+        case "connect_calendar_instructions": {
+          const provider = (call.args.provider as "google" | "caldav") || "google";
+          const connectUrl = this.calendarService.generateConnectUrl(userId, provider);
+          return {
+            summary:
+              provider === "google"
+                ? `Here is your secure link to connect Google Calendar: ${connectUrl}`
+                : `To connect your CalDAV calendar, please provide your server URL, username, and password.`,
+            data: { success: true, connectUrl, provider },
+          };
+        }
+
+        case "disconnect_calendar": {
+          const provider = (call.args.provider as "google" | "caldav") || "google";
+          const disconnected = await this.calendarService.disconnectAccount(userId, provider);
+          return {
+            summary: disconnected
+              ? `Disconnected your ${provider} calendar.`
+              : `No active ${provider} calendar found to disconnect.`,
+            data: { success: disconnected },
+          };
+        }
+
         default:
           return { summary: "I don't support that action yet.", data: { success: false, error: "unsupported_tool" } };
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof Error && (err.name === "ReauthRequiredError" || "provider" in err)) {
+        const connectUrl = this.calendarService.generateConnectUrl(userId, "google");
+        return {
+          summary: `Your Google Calendar connection has expired or was revoked. Please reconnect your calendar here: ${connectUrl}`,
+          data: { success: false, reauthRequired: true, connectUrl },
+        };
+      }
       logger.error({ err, tool: call.name, userId }, "Tool execution error");
       return { summary: "Something went wrong handling that.", data: { success: false, error: "internal_error" } };
     }

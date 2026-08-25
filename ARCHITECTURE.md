@@ -189,4 +189,72 @@ Telegram Voice / WhatsApp Audio
    - Timeout: 15,000 ms
 4. **Privacy & Ephemeral Buffering**: Audio buffers are processed purely in-memory and immediately garbage collected upon transcription. No voice audio is stored on disk or in the database.
 
+---
+
+## 10. External Calendar Integration & Calendar-Aware Secretary (P2.1)
+
+External calendar capability is implemented as an integration layer of Hevn Core, maintaining Hevn's identity as a singular conversational secretary rather than a standalone calendar assistant.
+
+```
+Telegram / WhatsApp / Voice
+              ↓
+     Conversation Core (ConversationOrchestrator)
+              ↓
+  LLM Tool Invocation (list_calendar_events, check_calendar_availability, create_calendar_event, etc.)
+              ↓
+      Schema Validation & Authorization Guardrails (Zod + LLM Authority Boundary)
+              ↓
+       Calendar Service (CalendarService)
+              ↓
+    ┌───────────────────────────────┬───────────────────────────────┐
+    ↓                               ↓                               ↓
+Google Calendar Provider        CalDAV Calendar Provider      Availability Engine
+(OAuth2, freeBusy, syncToken)   (RFC 4791, iCal RFC 5545)     (Interval Merging)
+    ↓                               ↓                               ↓
+Google Calendar API v3          Apple iCloud / Nextcloud / CalDAV Database & External Busy Slots
+```
+
+### Architectural Principles
+
+1. **Zero Task Pollution & Source-of-Truth Separation**:
+   - External calendar events are treated as **contextual schedule data**, NOT auto-created internal tasks.
+   - Syncing an external calendar never pollutes the user's task database.
+   - **Zero-Auto-Task Guardrail**: When an event or commitment is detected, Hevn can proactively suggest preparation in conversation, but never silently creates tasks.
+
+2. **Availability Calculation Engine**:
+   - Computes real-time availability across both external calendar events and internal Hevn commitments/tasks.
+   - Normalizes and merges overlapping busy intervals:
+     $$\bigcup [S_i, E_i] \to \text{Disjoint Busy Blocks}$$
+   - Computes continuous free time slots matching minimum duration requirements within user-specified search windows.
+
+3. **Two-Way Idempotent Sync & Connection Lifecycle**:
+   - Explicit commitments (`taskType: 'commitment'`) created in Hevn can be mirrored to the user's primary external calendar via `calendar_event_links`.
+   - External event IDs and ETags are tracked to ensure updates and re-syncs are idempotent and do not duplicate calendar entries.
+   - **Connection State Machine**: Accounts transition `active` → `reauth_required` upon revoked or expired refresh credentials (e.g. `invalid_grant`). Broken connections are skipped during sync to prevent hammering; users receive friendly conversational prompts with reconnect links.
+
+4. **HTTP Resilience & Rate Limit Backoff**:
+   - All external calendar provider calls utilize `fetchWithRetry` ([`src/utils/http.ts`](file:///Users/macbookpro/Documents/web_projects/hevn/src/utils/http.ts)).
+   - Implements bounded exponential backoff with full jitter for transient 5xx errors and network drops.
+   - Parses HTTP 429 `Retry-After` headers (supporting integer seconds and RFC 7231 HTTP dates).
+   - Fast-fails non-retryable 4xx client errors (400, 401, 403, 404).
+   - Enforces `AbortController` timeout protection (default 10s).
+
+5. **Conflict-Aware Scheduling Foundation (`findAvailableSlots`)**:
+   - Computes continuous free time windows matching requested `durationMinutes`.
+   - Supports configurable buffer padding before and after meetings (`preferences.bufferMinutes`).
+   - Respects user quiet hours across midnight boundaries (e.g., 22:00 to 07:00).
+   - Bounded by maximum requested slots (`preferences.maxSlots`).
+
+6. **Timezone Normalization & Recurrence**:
+   - All-day events are normalized to exact UTC midnight-to-midnight spans in the user's local timezone using timezone offset inverse transformation (`normalizeAllDayBounds`).
+   - Recurring events are expanded into single instances (`singleEvents: true`), preserving parent `recurringEventId` and recurrence exceptions (`RECURRENCE-ID`). Cancelled instances are excluded from availability.
+
+7. **Security, Observability & Redaction**:
+   - OAuth tokens (`access_token`, `refresh_token`) and CalDAV credentials are encrypted at rest using **AES-256-GCM** with unique 96-bit initialization vectors and authentication tags (`iv:tag:ciphertext`).
+   - OAuth authorization states are signed with HMAC-SHA256 and enforce a strict 10-minute expiry window.
+   - Deep Pino redaction and `sanitizeStringForLogging` guarantee zero token secrets appear in logs, error payloads, or traces.
+   - Emits structured telemetry metrics (`calendar.sync.success`, `calendar.oauth.reauth_required`, `calendar.sync.failure`).
+
+
+
 

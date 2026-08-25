@@ -4,6 +4,8 @@ import cron from "node-cron";
 import { TaskService } from "../core/tasks/TaskService";
 import { FollowUpService } from "../core/followup/FollowUpService";
 import { RecurringTaskService } from "../core/recurring/RecurringTaskService";
+import { CalendarService } from "../core/calendar/CalendarService";
+import type { CalendarAccount } from "../core/calendar/types";
 import { getAdapter, initDefaultAdapters } from "../adapters/registry";
 import { getPool } from "../db/pool";
 import { logger } from "../utils/logger";
@@ -172,11 +174,79 @@ async function processRecurringTasks() {
   }
 }
 
+const calendarService = new CalendarService();
+
+async function processCalendarSync() {
+  const startTime = Date.now();
+  try {
+    const { rows } = await getPool().query(
+      `SELECT id, user_id, provider
+       FROM calendar_accounts
+       WHERE status = 'active'
+         AND (last_sync_at IS NULL OR last_sync_at < now() - INTERVAL '15 minutes')
+       LIMIT 10`
+    );
+
+    for (const acc of rows) {
+      try {
+        const calendars = await calendarService.getSelectedCalendars(acc.user_id);
+        const provider = calendarService.getProvider(acc.provider);
+        const accounts = await calendarService.getAccounts(acc.user_id);
+        const account = accounts.find((a: CalendarAccount) => a.id === acc.id);
+
+        if (account && provider.incrementalSync) {
+          for (const cal of calendars) {
+            try {
+              const syncResult = await provider.incrementalSync(account, cal.externalCalendarId, cal.syncToken || undefined);
+              if (syncResult.nextSyncToken) {
+                await getPool().query(
+                  `UPDATE connected_calendars
+                   SET sync_token = $1, last_sync_at = now(), updated_at = now()
+                   WHERE id = $2`,
+                  [syncResult.nextSyncToken, cal.id]
+                );
+              }
+            } catch (calErr: unknown) {
+              logger.warn({ calErr, calendarId: cal.id }, "Calendar incremental sync failed for calendar");
+            }
+          }
+        }
+
+        await getPool().query(
+          `UPDATE calendar_accounts SET last_sync_at = now(), updated_at = now() WHERE id = $1`,
+          [acc.id]
+        );
+
+        calendarService.emitMetric({
+          eventType: "calendar.sync.success",
+          userId: acc.user_id,
+          provider: acc.provider,
+          durationMs: Date.now() - startTime,
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "ReauthRequiredError") {
+          await calendarService.updateAccountStatus(
+            acc.user_id,
+            acc.id,
+            "reauth_required",
+            "INVALID_GRANT",
+            err.message
+          );
+        }
+        logger.warn({ err, accountId: acc.id }, "Background calendar account sync failed");
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "Periodic calendar sync check failed");
+  }
+}
+
 async function tick() {
   try {
     await processReminders();
     await processFollowUps();
     await processRecurringTasks();
+    await processCalendarSync();
   } catch (err) {
     logger.error({ err }, "Worker tick failed");
   }
@@ -185,4 +255,6 @@ async function tick() {
 // Every minute — fine-grained enough for reminders & follow-ups
 cron.schedule("* * * * *", tick);
 
-logger.info("Hevn P1 background worker started (reminders, follow-ups, recurring tasks)");
+logger.info("Hevn P2 background worker started (reminders, follow-ups, recurring tasks, calendar sync)");
+
+

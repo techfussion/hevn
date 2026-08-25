@@ -169,3 +169,23 @@ export interface OutboundMessage {
   text: string;
   buttons?: ActionButton[];
 }
+
+export type {
+  CalendarProviderType,
+  CalendarAccountStatus,
+  CalendarAccessRole,
+  CalendarSyncStatus,
+  CalendarAccount,
+  ConnectedCalendar,
+  CalendarEvent,
+  CalendarEventLink,
+  TimeSlot,
+  CalendarAvailability,
+  AvailabilityOptions,
+  FindSlotsPreferences,
+  CalendarMetricEvent,
+  DiscoveredCalendar,
+  CalendarProvider,
+} from "../core/calendar/types";
+export { ReauthRequiredError } from "../core/calendar/types";
+

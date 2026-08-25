@@ -359,4 +359,81 @@ export const taskTools: FunctionDeclaration[] = [
       required: ["start_time", "end_time"],
     },
   },
+  {
+    name: "list_calendar_events",
+    description:
+      "Fetch upcoming external calendar events (e.g. 'What is on my calendar tomorrow?', 'Check my schedule for Thursday', 'Do I have meetings today?').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        time_min_iso: { type: Type.STRING, description: "ISO 8601 start of search window" },
+        time_max_iso: { type: Type.STRING, description: "ISO 8601 end of search window" },
+        limit: { type: Type.NUMBER, description: "Maximum events to return, default 10" },
+      },
+      required: ["time_min_iso", "time_max_iso"],
+    },
+  },
+  {
+    name: "check_calendar_availability",
+    description:
+      "Check whether the user is free or busy during a specific time range, or find free slots (e.g. 'Am I free Thursday afternoon?', 'Find a 1-hour free slot tomorrow morning').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        time_min_iso: { type: Type.STRING, description: "ISO 8601 start of time range to inspect" },
+        time_max_iso: { type: Type.STRING, description: "ISO 8601 end of time range to inspect" },
+        duration_minutes: { type: Type.NUMBER, description: "Desired continuous free slot duration in minutes (default 30)" },
+      },
+      required: ["time_min_iso", "time_max_iso"],
+    },
+  },
+  {
+    name: "create_calendar_event",
+    description:
+      "Explicitly schedule or create an event on the user's connected external calendar (e.g. 'Put my dentist appointment on my Google Calendar Friday at 10am').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: "Title of the calendar event" },
+        start_at_iso: { type: Type.STRING, description: "ISO 8601 start datetime" },
+        end_at_iso: { type: Type.STRING, description: "ISO 8601 end datetime" },
+        description: { type: Type.STRING, description: "Optional description or notes" },
+        calendar_id: { type: Type.STRING, description: "Optional target calendar ID" },
+      },
+      required: ["title", "start_at_iso", "end_at_iso"],
+    },
+  },
+  {
+    name: "connect_calendar_instructions",
+    description:
+      "Generate a secure connection link or instructions when user asks to connect Google Calendar or Apple iCal/CalDAV (e.g. 'Connect my Google Calendar', 'Link my iCal').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        provider: {
+          type: Type.STRING,
+          enum: ["google", "caldav"],
+          description: "Calendar provider to connect",
+        },
+      },
+      required: ["provider"],
+    },
+  },
+  {
+    name: "disconnect_calendar",
+    description:
+      "Disconnect an external calendar provider without deleting internal Hevn tasks (e.g. 'Disconnect my Google Calendar').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        provider: {
+          type: Type.STRING,
+          enum: ["google", "caldav"],
+          description: "Calendar provider to disconnect",
+        },
+      },
+      required: ["provider"],
+    },
+  },
 ];
+
