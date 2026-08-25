@@ -48,10 +48,22 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
 * **External Calendar Untrusted Boundary**: Titles, descriptions, and location fields fetched from external calendars are treated as untrusted third-party inputs. The AI system prompt fences external calendar data and instructs the model to disregard injected commands contained within event summaries.
 * **Multi-Tenant Calendar Isolation**: Database tables `calendar_accounts`, `connected_calendars`, and `calendar_event_links` enforce PostgreSQL Row-Level Security (`user_id = current_setting('app.current_user_id')`) ensuring absolute tenant isolation.
 
+### H. Outbound Voice Audio Synthesis & Delivery Security (P2.3)
+* **Secret Redaction & API Key Protection**: ElevenLabs API keys, Google Cloud API keys, and platform access tokens are strictly redacted using deep Pino redaction paths and `sanitizeStringForLogging`. Provider credentials never appear in telemetry, error payloads, or logs.
+* **Ephemeral In-Memory Processing & Data Minimization**: Synthesized audio buffers are held purely in volatile memory for delivery and immediately released for garbage collection. Audio binaries are never written to permanent disk storage or stored in PostgreSQL.
+* **Prompt Injection & Memory Non-Interference**: Stored memories, task titles, or external calendar event summaries cannot modify the voice provider, API keys, voice configuration, or channel security parameters.
+* **Denial-of-Service & Resource Exhaustion Defense**:
+  * Strict text synthesis caps (max 1500 characters hard limit; max 500 characters for auto-voice).
+  * Request timeout protection (10 seconds via AbortController).
+  * Bounded exponential backoff with full jitter (max 2 retries).
+* **SSRF & Callback Prevention**: All provider communication is restricted to verified provider endpoints (`api.elevenlabs.io`, `texttospeech.googleapis.com`). Arbitrary user-supplied URLs or endpoints are never contacted.
+* **Deterministic Fail-Safe Fallback**: Any failure in the synthesis or delivery pipeline automatically falls back to standard text messaging without exposing provider stack traces or internal infrastructure details to the end user.
+
 ---
 
 ## 3. Vulnerability Reporting
 
 If you identify any security issue, do not commit sensitive keys or logs to version control. Report findings to the security team or create a private security advisory.
+
 
 

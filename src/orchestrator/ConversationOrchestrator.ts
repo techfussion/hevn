@@ -531,6 +531,32 @@ export class ConversationOrchestrator {
           };
         }
 
+        case "set_voice_preferences": {
+          const responseMode = call.args.response_mode as "text" | "voice" | "auto" | undefined;
+          const voiceEnabled = typeof call.args.voice_enabled === "boolean" ? call.args.voice_enabled : undefined;
+          const voiceName = typeof call.args.voice_name === "string" ? call.args.voice_name : undefined;
+
+          await this.userService.setVoicePreferences(userId, {
+            responseMode,
+            voiceEnabled,
+            voiceName,
+          });
+
+          let desc = "Updated your voice settings.";
+          if (responseMode === "voice") {
+            desc = "Got it! I will now reply to you with voice notes.";
+          } else if (responseMode === "text") {
+            desc = "Understood. I will stick to text replies.";
+          } else if (responseMode === "auto") {
+            desc = "Understood. I will automatically match your message format (voice for voice, text for text).";
+          }
+
+          return {
+            summary: desc,
+            data: { success: true, responseMode, voiceEnabled, voiceName },
+          };
+        }
+
         default:
           return { summary: "I don't support that action yet.", data: { success: false, error: "unsupported_tool" } };
       }

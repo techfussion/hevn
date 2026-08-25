@@ -6,13 +6,14 @@ import { UserService } from "../core/tasks/UserService";
 import { FollowUpService } from "../core/followup/FollowUpService";
 import { AudioIngestionService } from "../core/voice/AudioIngestionService";
 import { GeminiTranscriptionProvider } from "../core/voice/GeminiTranscriptionProvider";
+import { ResponsePolicyService } from "../core/voice/ResponsePolicyService";
 import { logger } from "../utils/logger";
 
 /**
  * Builds the webhook router for a given adapter. Every request goes
  * through: rate limiting (applied in index.ts) -> raw body capture
  * (needed for signature verification) -> signature check -> parse ->
- * deduplication -> audio normalization (if voice) -> orchestrate -> reply.
+ * deduplication -> audio normalization (if voice) -> orchestrate -> reply (via ResponsePolicy).
  * Any failure at the signature step returns 401.
  */
 export function buildWebhookRouter(
@@ -20,9 +21,11 @@ export function buildWebhookRouter(
   orchestrator: ConversationOrchestrator,
   userService: UserService,
   followUpService: FollowUpService = new FollowUpService(),
-  audioIngestionService?: AudioIngestionService
+  audioIngestionService?: AudioIngestionService,
+  responsePolicyService?: ResponsePolicyService
 ): Router {
   const router = Router();
+  const policyService = responsePolicyService || new ResponsePolicyService();
 
   // Capture raw body for HMAC verification — express.json() alone discards it.
   router.use(
@@ -109,7 +112,12 @@ export function buildWebhookRouter(
           }
 
           if (replyText && result.success) {
-            await adapter.sendMessage({ userId: user.platformUserId, text: replyText });
+            await policyService.deliverResponse(
+              adapter,
+              user,
+              { userId: user.platformUserId, text: replyText },
+              { inputWasAudio: false, correlationId }
+            );
           }
         } else {
           await adapter.answerCallbackQuery?.(incomingCb.id, "Acknowledged");
@@ -130,6 +138,9 @@ export function buildWebhookRouter(
           return;
         }
       }
+
+      // Track if incoming interaction was audio
+      const inputWasAudio = Boolean(incoming.audio);
 
       // 3. Handle voice/audio ingestion if incoming message contains audio
       if (incoming.audio) {
@@ -169,7 +180,13 @@ export function buildWebhookRouter(
 
       const user = await userService.getOrCreate(adapter.platformName, incoming.platformUserId);
       const reply = await orchestrator.handleMessage(user, incoming.text, correlationId);
-      await adapter.sendMessage({ userId: user.platformUserId, text: reply });
+
+      await policyService.deliverResponse(
+        adapter,
+        user,
+        { userId: user.platformUserId, text: reply },
+        { inputWasAudio, correlationId }
+      );
     } catch (err) {
       logger.error({ err, correlationId, platform: adapter.platformName }, "Failed to process webhook message");
       // Deliberately don't leak error details back to the messaging platform.

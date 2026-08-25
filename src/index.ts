@@ -15,6 +15,10 @@ import { InsightsService } from "./core/insights/InsightsService";
 import { FollowUpService } from "./core/followup/FollowUpService";
 import { AudioIngestionService } from "./core/voice/AudioIngestionService";
 import { GeminiTranscriptionProvider } from "./core/voice/GeminiTranscriptionProvider";
+import { AudioSynthesisService } from "./core/voice/AudioSynthesisService";
+import { ResponsePolicyService } from "./core/voice/ResponsePolicyService";
+import { ElevenLabsSynthesisProvider } from "./core/voice/providers/ElevenLabsSynthesisProvider";
+import { GoogleCloudTtsProvider } from "./core/voice/providers/GoogleCloudTtsProvider";
 import { CalendarService } from "./core/calendar/CalendarService";
 import { createCalendarOAuthRouter } from "./api/calendarOAuthRouter";
 import { logger } from "./utils/logger";
@@ -42,6 +46,13 @@ async function main() {
   const audioIngestionService = new AudioIngestionService(
     new GeminiTranscriptionProvider(gemmaApiKey)
   );
+
+  const audioSynthesisProvider = process.env.ELEVENLABS_API_KEY
+    ? new ElevenLabsSynthesisProvider({ apiKey: process.env.ELEVENLABS_API_KEY })
+    : new GoogleCloudTtsProvider({ apiKey: gemmaApiKey });
+
+  const audioSynthesisService = new AudioSynthesisService(audioSynthesisProvider);
+  const responsePolicyService = new ResponsePolicyService(audioSynthesisService);
 
   const botName = process.env.BOT_NAME ?? "Hevn";
 
@@ -75,7 +86,14 @@ async function main() {
   app.use(
     "/webhook/telegram",
     webhookRateLimiter,
-    buildWebhookRouter(telegramAdapter, orchestrator, userService, followUpService, audioIngestionService)
+    buildWebhookRouter(
+      telegramAdapter,
+      orchestrator,
+      userService,
+      followUpService,
+      audioIngestionService,
+      responsePolicyService
+    )
   );
 
 
@@ -107,7 +125,14 @@ async function main() {
     app.use(
       "/webhook/whatsapp",
       webhookRateLimiter,
-      buildWebhookRouter(whatsappAdapter, orchestrator, userService, followUpService, audioIngestionService)
+      buildWebhookRouter(
+        whatsappAdapter,
+        orchestrator,
+        userService,
+        followUpService,
+        audioIngestionService,
+        responsePolicyService
+      )
     );
   }
 

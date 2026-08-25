@@ -129,6 +129,15 @@ export interface ProjectSummary {
   }>;
 }
 
+export type ResponseMode = "text" | "voice" | "auto";
+
+export interface UserVoicePreferences {
+  responseMode: ResponseMode;
+  voiceEnabled: boolean;
+  voiceName: string | null;
+  voiceLanguage: string | null;
+}
+
 export interface User {
   id: string;
   platform: "telegram" | "whatsapp";
@@ -146,6 +155,10 @@ export interface User {
   followupPreference: FollowUpPreference;
   quietHoursStart: string | null; // e.g. "22:00"
   quietHoursEnd: string | null; // e.g. "07:00"
+  responseMode: ResponseMode;
+  voiceEnabled: boolean;
+  voiceName: string | null;
+  voiceLanguage: string | null;
   createdAt: string;
 }
 

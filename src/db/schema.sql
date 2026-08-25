@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS users (
   followup_preference    TEXT NOT NULL DEFAULT 'active' CHECK (followup_preference IN ('active', 'relaxed', 'off')),
   quiet_hours_start      TEXT, -- e.g. '22:00'
   quiet_hours_end        TEXT, -- e.g. '07:00'
+  response_mode          TEXT NOT NULL DEFAULT 'auto' CHECK (response_mode IN ('text', 'voice', 'auto')),
+  voice_enabled          BOOLEAN NOT NULL DEFAULT true,
+  voice_name             TEXT,
+  voice_language         TEXT,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (platform, platform_user_id)
 );

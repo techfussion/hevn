@@ -1,6 +1,7 @@
 import crypto from "crypto";
-import type { MessagingAdapter, IncomingMessage } from "../MessagingAdapter";
+import type { MessagingAdapter, IncomingMessage, ChannelCapabilities, OutboundAudio } from "../MessagingAdapter";
 import type { OutboundMessage } from "../../types/domain";
+import { logger } from "../../utils/logger";
 
 /**
  * WhatsApp Cloud API adapter.
@@ -9,6 +10,13 @@ import type { OutboundMessage } from "../../types/domain";
  */
 export class WhatsAppAdapter implements MessagingAdapter {
   readonly platformName = "whatsapp" as const;
+  readonly capabilities: ChannelCapabilities = {
+    textInput: true,
+    audioInput: true,
+    textOutput: true,
+    audioOutput: true,
+    interactiveButtons: false,
+  };
 
   constructor(
     private accessToken: string,
@@ -35,6 +43,57 @@ export class WhatsAppAdapter implements MessagingAdapter {
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`WhatsApp sendMessage failed (${res.status}): ${body}`);
+    }
+  }
+
+  async sendAudio(audio: OutboundAudio): Promise<void> {
+    // 1. Upload audio media to WhatsApp
+    const uploadUrl = `https://graph.facebook.com/v20.0/${this.phoneNumberId}/media`;
+    const formData = new FormData();
+    formData.append("messaging_product", "whatsapp");
+    const mime = audio.mimeType || "audio/ogg";
+    const filename = audio.filename || (mime.includes("mp3") ? "audio.mp3" : "audio.ogg");
+    formData.append("file", new Blob([audio.buffer], { type: mime }), filename);
+    formData.append("type", mime);
+
+    const uploadRes = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const body = await uploadRes.text();
+      logger.error({ status: uploadRes.status, body }, "WhatsApp media upload failed");
+      throw new Error(`WhatsApp media upload failed (${uploadRes.status}): ${body}`);
+    }
+
+    const uploadData = (await uploadRes.json()) as { id?: string };
+    if (!uploadData.id) {
+      throw new Error("WhatsApp media upload did not return a media ID");
+    }
+
+    // 2. Send the uploaded media as an audio message
+    const sendUrl = `https://graph.facebook.com/v20.0/${this.phoneNumberId}/messages`;
+    const sendRes = await fetch(sendUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: audio.userId,
+        type: "audio",
+        audio: { id: uploadData.id },
+      }),
+    });
+
+    if (!sendRes.ok) {
+      const body = await sendRes.text();
+      throw new Error(`WhatsApp sendAudio failed (${sendRes.status}): ${body}`);
     }
   }
 

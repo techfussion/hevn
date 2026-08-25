@@ -21,10 +21,33 @@ import "./dailyCheckIns"; // registers daily morning/evening check-in schedules 
  * Run with: npm run worker
  */
 
+import { AudioSynthesisService } from "../core/voice/AudioSynthesisService";
+import { ResponsePolicyService } from "../core/voice/ResponsePolicyService";
+import { ElevenLabsSynthesisProvider } from "../core/voice/providers/ElevenLabsSynthesisProvider";
+import { GoogleCloudTtsProvider } from "../core/voice/providers/GoogleCloudTtsProvider";
+import type { User } from "../types/domain";
+
 initDefaultAdapters();
 const taskService = new TaskService();
 const followUpService = new FollowUpService();
 const recurringService = new RecurringTaskService();
+
+function createAudioSynthesisService(): AudioSynthesisService | undefined {
+  if (process.env.ELEVENLABS_API_KEY) {
+    return new AudioSynthesisService(
+      new ElevenLabsSynthesisProvider({ apiKey: process.env.ELEVENLABS_API_KEY })
+    );
+  }
+  if (process.env.GEMMA_API_KEY) {
+    return new AudioSynthesisService(
+      new GoogleCloudTtsProvider({ apiKey: process.env.GEMMA_API_KEY })
+    );
+  }
+  return undefined;
+}
+
+const audioSynthesisService = createAudioSynthesisService();
+const responsePolicyService = new ResponsePolicyService(audioSynthesisService);
 
 async function processReminders() {
   const dueTasks = await taskService.getDueRemindersBatch(100);
@@ -35,11 +58,35 @@ async function processReminders() {
   for (const task of dueTasks) {
     try {
       const { rows } = await getPool().query(
-        `SELECT platform, platform_user_id, timezone, quiet_hours_start, quiet_hours_end FROM users WHERE id = $1`,
+        `SELECT id, platform, platform_user_id, timezone, quiet_hours_start, quiet_hours_end, response_mode, voice_enabled, voice_name, voice_language FROM users WHERE id = $1`,
         [task.userId]
       );
-      const user = rows[0];
-      if (!user) continue;
+      const row = rows[0];
+      if (!row) continue;
+
+      const user: User = {
+        id: row.id,
+        platform: row.platform,
+        platformUserId: row.platform_user_id,
+        displayName: null,
+        timezone: row.timezone || "UTC",
+        onboarded: true,
+        onboardingState: "COMPLETED",
+        assistantName: "Hevn",
+        botPersona: "Hevn",
+        persona: "professional",
+        preferredCheckinTime: "06:00",
+        preferredCheckinHour: 6,
+        plan: "free",
+        followupPreference: "active",
+        quietHoursStart: row.quiet_hours_start,
+        quietHoursEnd: row.quiet_hours_end,
+        responseMode: row.response_mode || "auto",
+        voiceEnabled: row.voice_enabled !== false,
+        voiceName: row.voice_name || null,
+        voiceLanguage: row.voice_language || null,
+        createdAt: new Date().toISOString(),
+      };
 
       const dueTime = new Date(task.dueAt).toLocaleString();
       const messageText = `Reminder: "${task.title}" is approaching (due at ${dueTime}). Reply "done" once you've handled it, or "snooze 30" to delay.`;
@@ -50,10 +97,14 @@ async function processReminders() {
         continue;
       }
 
-      await adapter.sendMessage({
-        userId: user.platform_user_id,
-        text: messageText,
-      });
+      await responsePolicyService.deliverResponse(
+        adapter,
+        user,
+        {
+          userId: user.platformUserId,
+          text: messageText,
+        }
+      );
 
       await taskService.markReminderSent(task.id);
     } catch (err) {
@@ -79,7 +130,8 @@ async function processFollowUps() {
   for (const followUp of dueFollowUps) {
     try {
       const { rows } = await getPool().query(
-        `SELECT u.platform, u.platform_user_id, u.timezone, u.quiet_hours_start, u.quiet_hours_end, u.followup_preference,
+        `SELECT u.id, u.platform, u.platform_user_id, u.timezone, u.quiet_hours_start, u.quiet_hours_end, u.followup_preference,
+                u.response_mode, u.voice_enabled, u.voice_name, u.voice_language,
                 t.title, t.status as task_status
          FROM users u
          JOIN tasks t ON t.id = $1
@@ -124,6 +176,30 @@ async function processFollowUps() {
         continue;
       }
 
+      const user: User = {
+        id: row.id,
+        platform: row.platform,
+        platformUserId: row.platform_user_id,
+        displayName: null,
+        timezone: row.timezone || "UTC",
+        onboarded: true,
+        onboardingState: "COMPLETED",
+        assistantName: "Hevn",
+        botPersona: "Hevn",
+        persona: "professional",
+        preferredCheckinTime: "06:00",
+        preferredCheckinHour: 6,
+        plan: "free",
+        followupPreference: row.followup_preference || "active",
+        quietHoursStart: row.quiet_hours_start,
+        quietHoursEnd: row.quiet_hours_end,
+        responseMode: row.response_mode || "auto",
+        voiceEnabled: row.voice_enabled !== false,
+        voiceName: row.voice_name || null,
+        voiceLanguage: row.voice_language || null,
+        createdAt: new Date().toISOString(),
+      };
+
       const messageText = `Following up on "${row.title}" — have you managed to get this done? Reply "done", "not yet", or let me know when to check back.`;
 
       const buttons =
@@ -135,11 +211,15 @@ async function processFollowUps() {
             ]
           : undefined;
 
-      await adapter.sendMessage({
-        userId: row.platform_user_id,
-        text: messageText,
-        buttons,
-      });
+      await responsePolicyService.deliverResponse(
+        adapter,
+        user,
+        {
+          userId: row.platform_user_id,
+          text: messageText,
+          buttons,
+        }
+      );
 
       await followUpService.markDelivered(followUp.id);
     } catch (err) {

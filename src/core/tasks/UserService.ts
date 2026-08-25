@@ -1,5 +1,5 @@
 import { getPool, withUserScope } from "../../db/pool";
-import type { User, OnboardingState, UserPersona, FollowUpPreference } from "../../types/domain";
+import type { User, OnboardingState, UserPersona, FollowUpPreference, ResponseMode, UserVoicePreferences } from "../../types/domain";
 
 const DEFAULT_TIMEZONE = "UTC";
 
@@ -15,8 +15,8 @@ export class UserService {
 
     try {
       const inserted = await pool.query(
-        `INSERT INTO users (platform, platform_user_id, timezone, onboarding_state, assistant_name, persona, preferred_checkin_time, preferred_checkin_hour, plan, followup_preference)
-         VALUES ($1, $2, $3, 'WELCOME', 'Hevn', 'professional', '06:00', 6, 'free', 'active')
+        `INSERT INTO users (platform, platform_user_id, timezone, onboarding_state, assistant_name, persona, preferred_checkin_time, preferred_checkin_hour, plan, followup_preference, response_mode, voice_enabled)
+         VALUES ($1, $2, $3, 'WELCOME', 'Hevn', 'professional', '06:00', 6, 'free', 'active', 'auto', true)
          RETURNING *`,
         [platform, platformUserId, DEFAULT_TIMEZONE]
       );
@@ -134,6 +134,42 @@ export class UserService {
     });
   }
 
+  async setVoicePreferences(
+    userId: string,
+    prefs: Partial<UserVoicePreferences>
+  ): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      const updates: string[] = [];
+      const values: unknown[] = [];
+      let idx = 1;
+
+      if (prefs.responseMode !== undefined) {
+        updates.push(`response_mode = $${idx++}`);
+        values.push(prefs.responseMode);
+      }
+      if (prefs.voiceEnabled !== undefined) {
+        updates.push(`voice_enabled = $${idx++}`);
+        values.push(prefs.voiceEnabled);
+      }
+      if (prefs.voiceName !== undefined) {
+        updates.push(`voice_name = $${idx++}`);
+        values.push(prefs.voiceName);
+      }
+      if (prefs.voiceLanguage !== undefined) {
+        updates.push(`voice_language = $${idx++}`);
+        values.push(prefs.voiceLanguage);
+      }
+
+      if (updates.length === 0) return;
+
+      values.push(userId);
+      await client.query(
+        `UPDATE users SET ${updates.join(", ")} WHERE id = $${idx}`,
+        values
+      );
+    });
+  }
+
   async tryAcquireUpdate(updateId: string, platform: "telegram" | "whatsapp"): Promise<boolean> {
     const pool = getPool();
     try {
@@ -158,6 +194,8 @@ function mapRow(row: Record<string, unknown>): User {
   const persona = ((row.persona as string) || "professional") as UserPersona;
   const onboardingState = ((row.onboarding_state as string) || (row.onboarded ? "COMPLETED" : "WELCOME")) as OnboardingState;
   const followupPreference = ((row.followup_preference as string) || "active") as FollowUpPreference;
+  const responseMode = ((row.response_mode as string) || "auto") as ResponseMode;
+  const voiceEnabled = row.voice_enabled !== false; // defaults to true unless explicitly false
 
   return {
     id: row.id as string,
@@ -176,6 +214,10 @@ function mapRow(row: Record<string, unknown>): User {
     followupPreference,
     quietHoursStart: (row.quiet_hours_start as string | null) ?? null,
     quietHoursEnd: (row.quiet_hours_end as string | null) ?? null,
+    responseMode,
+    voiceEnabled,
+    voiceName: (row.voice_name as string | null) ?? null,
+    voiceLanguage: (row.voice_language as string | null) ?? null,
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString()

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import type { MessagingAdapter, IncomingMessage, IncomingCallbackQuery } from "../MessagingAdapter";
+import type { MessagingAdapter, IncomingMessage, IncomingCallbackQuery, ChannelCapabilities, OutboundAudio } from "../MessagingAdapter";
 import type { OutboundMessage } from "../../types/domain";
 import { logger } from "../../utils/logger";
 
@@ -10,6 +10,13 @@ import { logger } from "../../utils/logger";
  */
 export class TelegramAdapter implements MessagingAdapter {
   readonly platformName = "telegram" as const;
+  readonly capabilities: ChannelCapabilities = {
+    textInput: true,
+    audioInput: true,
+    textOutput: true,
+    audioOutput: true,
+    interactiveButtons: true,
+  };
 
   constructor(
     private botToken: string,
@@ -51,6 +58,55 @@ export class TelegramAdapter implements MessagingAdapter {
       } catch (err) {
         if (attempt === maxRetries) throw err;
         logger.warn({ err, attempt: attempt + 1, maxRetries }, "Telegram sendMessage network error, retrying");
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+  }
+
+  async sendAudio(audio: OutboundAudio): Promise<void> {
+    const url = `https://api.telegram.org/bot${this.botToken}/sendVoice`;
+    const maxRetries = 2;
+
+    const formData = new FormData();
+    formData.append("chat_id", audio.userId);
+
+    const blob = new Blob([audio.buffer], { type: audio.mimeType || "audio/ogg" });
+    const filename = audio.filename || (audio.mimeType.includes("mp3") ? "voice.mp3" : "voice.ogg");
+    formData.append("voice", blob, filename);
+
+    if (audio.caption) {
+      formData.append("caption", audio.caption.slice(0, 1024));
+    }
+
+    if (audio.buttons && audio.buttons.length > 0) {
+      formData.append(
+        "reply_markup",
+        JSON.stringify({
+          inline_keyboard: [
+            audio.buttons.map((btn) => ({
+              text: btn.label,
+              callback_data: btn.action,
+            })),
+          ],
+        })
+      );
+    }
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Telegram sendVoice failed (${res.status}): ${body}`);
+        }
+        return;
+      } catch (err) {
+        if (attempt === maxRetries) throw err;
+        logger.warn({ err, attempt: attempt + 1, maxRetries }, "Telegram sendVoice network error, retrying");
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
     }

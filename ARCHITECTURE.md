@@ -255,6 +255,75 @@ Google Calendar API v3          Apple iCloud / Nextcloud / CalDAV Database & Ext
    - Deep Pino redaction and `sanitizeStringForLogging` guarantee zero token secrets appear in logs, error payloads, or traces.
    - Emits structured telemetry metrics (`calendar.sync.success`, `calendar.oauth.reauth_required`, `calendar.sync.failure`).
 
+---
+
+## 11. Outbound Audio & Multimodal Response Architecture (P2.3)
+
+P2.3 completes the multimodal secretary loop with outbound audio capabilities, notification intelligence, and production-grade resilience.
+
+```
+Incoming Message (Text or Voice)
+              ↓
+   Channel Adapter (Telegram / WhatsApp)
+              ↓
+  Input Normalization & Inbound Transcribe
+              ↓
+   Conversation Orchestrator (Canonical Business Logic)
+              ↓
+    Core Domain Services (TaskService, FollowUpService, CalendarService, etc.)
+              ↓
+    Generated Secretary Reply Text
+              ↓
+    Response Policy Engine (ResponsePolicyService)
+    ├── User Preference Check (response_mode: text | voice | auto)
+    ├── Channel Capabilities Check (capabilities.audioOutput)
+    └── Length & Modality Evaluation (maxAutoVoiceLength / maxTextLength)
+              ↓
+┌───────────────────────────────┴───────────────────────────────┐
+↓                                                               ↓
+Audio Synthesis (AudioSynthesisService)                 Direct Text Delivery
+├── In-Memory LRU Cache Lookup (SHA-256)                        ↓
+├── Provider Adapter (ElevenLabs / Google TTS)          adapter.sendMessage(text)
+├── Timeout & HTTP Retry Protection (fetchWithRetry)
+└── Outbound Audio Payload (OutboundAudio)
+              ↓
+  Channel Delivery (sendAudio / sendVoice)
+  ├── Telegram: multipart sendVoice with inline buttons
+  ├── WhatsApp: media upload & audio dispatch
+  └── On Failure: Automatic Graceful Fallback → adapter.sendMessage
+```
+
+### Architectural Principles
+
+1. **Zero Assistant Duplication**:
+   - Voice is strictly an I/O modality of the existing secretary.
+   - All domain services (tasks, reminders, commitments, follow-ups, memory, projects, and calendar) remain the canonical source of truth.
+
+2. **Deterministic Response Policy (`ResponsePolicyService`)**:
+   - The LLM is never responsible for deciding whether the infrastructure can send audio. That decision belongs 100% to application code.
+   - Evaluates:
+     - `user.response_mode === 'text'`: always delivers text.
+     - `user.response_mode === 'voice'`: attempts audio, automatically falling back to text on failure.
+     - `user.response_mode === 'auto'`: produces voice only when incoming message was voice and text length $\le 500$ characters.
+     - Channel capabilities: never attempts audio on channels without `audioOutput: true`.
+
+3. **Provider Abstraction (`AudioSynthesisProvider`)**:
+   - The domain depends only on the `AudioSynthesisProvider` contract, decoupled from ElevenLabs or Google Cloud TTS.
+   - Uses `fetchWithRetry` for exponential backoff, jitter, and timeout protection.
+
+4. **In-Memory Caching & Cost Protection**:
+   - LRU / TTL cache keyed by SHA-256 hash of text + voice settings prevents duplicate provider synthesis requests.
+   - Strict character length limits (500 chars for auto voice, 1500 chars hard limit).
+
+5. **Voice Follow-Ups with Inline Interactive Buttons**:
+   - `FollowUpService` state machine is preserved. Follow-ups can be presented as audio notes with inline callback buttons (`[Done] [Not Yet] [+1 Hour]`) on Telegram.
+
+6. **Structured Telemetry & Deterministic Metrics (`VoiceMetricsService`)**:
+   - Emits structured events: `voice.synthesis.started`, `voice.synthesis.success`, `voice.synthesis.failure`, `voice.delivery.success`, `voice.delivery.failure`, `voice.delivery.fallback_text`.
+   - Tracks metrics: `voiceSynthesisRequests`, `voiceSynthesisSuccesses`, `voiceSynthesisFailures`, `voiceDeliverySuccesses`, `voiceDeliveryFailures`, `voiceTextFallbacks`, `averageSynthesisLatency`, `synthesisTimeoutCount`.
+   - Zero sensitive tokens or raw audio logged.
+
+
 
 
 

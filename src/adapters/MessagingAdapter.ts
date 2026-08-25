@@ -1,7 +1,27 @@
-import type { OutboundMessage } from "../types/domain";
+import type { OutboundMessage, ActionButton } from "../types/domain";
 import type { IncomingAudio } from "../core/voice/types";
 
 export type { IncomingAudio };
+
+export interface ChannelCapabilities {
+  readonly textInput: boolean;
+  readonly audioInput: boolean;
+  readonly textOutput: boolean;
+  readonly audioOutput: boolean;
+  readonly interactiveButtons: boolean;
+}
+
+export interface OutboundAudio {
+  userId: string;
+  buffer: Buffer;
+  mimeType: string;
+  filename?: string;
+  durationSeconds?: number;
+  voiceMetadata?: Record<string, unknown>;
+  correlationId?: string;
+  caption?: string;
+  buttons?: ActionButton[];
+}
 
 /**
  * Every messaging platform (Telegram, WhatsApp, ...) implements this
@@ -29,6 +49,7 @@ export interface IncomingCallbackQuery {
 
 export interface MessagingAdapter {
   readonly platformName: "telegram" | "whatsapp";
+  readonly capabilities: ChannelCapabilities;
 
   /**
    * Send a free-form conversational message.
@@ -37,6 +58,11 @@ export interface MessagingAdapter {
    * sendTemplate instead.
    */
   sendMessage(message: OutboundMessage): Promise<void>;
+
+  /**
+   * Send synthesized outbound audio message to the user.
+   */
+  sendAudio?(audio: OutboundAudio): Promise<void>;
 
   /**
    * Send a pre-approved template message. Required for WhatsApp

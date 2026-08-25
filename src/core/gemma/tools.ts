@@ -435,5 +435,30 @@ export const taskTools: FunctionDeclaration[] = [
       required: ["provider"],
     },
   },
+  {
+    name: "set_voice_preferences",
+    description:
+      "Configure user response mode and voice settings (e.g. 'Reply to me with voice', 'Switch to text only', 'Use voice messages').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        response_mode: {
+          type: Type.STRING,
+          enum: ["text", "voice", "auto"],
+          description: "Response mode: 'text' (always reply with text), 'voice' (always reply with voice), or 'auto' (reply with voice when user sends voice).",
+        },
+        voice_enabled: {
+          type: Type.BOOLEAN,
+          description: "Enable or disable voice output capability",
+        },
+        voice_name: {
+          type: Type.STRING,
+          description: "Optional voice identifier or voice style preset",
+        },
+      },
+      required: [],
+    },
+  },
 ];
+
 
