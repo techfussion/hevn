@@ -327,6 +327,157 @@ export interface StudyInsights {
   upcomingAssessments: Array<{ title: string; courseName: string; dueAt: string }>;
 }
 
+// ============================================================
+// P2.5: Durable Job Queue & Scheduling Types
+// ============================================================
+
+export type JobStatus = "pending" | "active" | "completed" | "failed" | "cancelled";
+
+export interface Job<T = Record<string, unknown>> {
+  id: string;
+  queueName: string;
+  jobType: string;
+  userId: string | null;
+  payload: T;
+  status: JobStatus;
+  idempotencyKey: string | null;
+  singletonKey: string | null;
+  priority: number;
+  attempts: number;
+  maxAttempts: number;
+  runAt: string;
+  lockedUntil: string | null;
+  lockedBy: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface JobOptions {
+  queueName?: string;
+  priority?: number;
+  runAt?: string | Date;
+  delaySeconds?: number;
+  idempotencyKey?: string;
+  singletonKey?: string;
+  maxAttempts?: number;
+}
+
+// ============================================================
+// P2.5: Notification Policy, Deduplication & Digest Types
+// ============================================================
+
+export type NotificationDedupStatus = "pending" | "delivered" | "suppressed" | "batched" | "deferred";
+
+export interface NotificationDedupRecord {
+  id: string;
+  userId: string;
+  dedupKey: string;
+  channel: string;
+  category: string;
+  status: NotificationDedupStatus;
+  payloadSummary: string | null;
+  deliveredAt: string;
+  createdAt: string;
+}
+
+export type NotificationAction = "deliver" | "defer" | "suppress" | "digest";
+
+export interface NotificationDecision {
+  eligible: boolean;
+  action: NotificationAction;
+  reason: string;
+  deferredUntil?: string;
+  deliveryModality: "text" | "voice";
+  consolidatedPayload?: {
+    text: string;
+    buttons?: Array<{ label: string; action: string }>;
+  };
+}
+
+export interface NotificationDigestItem {
+  id: string;
+  type: "reminder" | "follow_up" | "study_session" | "recurring_task";
+  title: string;
+  dueAt?: string;
+}
+
+export interface NotificationDigest {
+  userId: string;
+  channel: string;
+  items: NotificationDigestItem[];
+  formattedText: string;
+}
+
+// ============================================================
+// P2.5: Schedule Risk Engine & Cross-Domain Secretary Briefing
+// ============================================================
+
+export type RiskSeverity = "low" | "medium" | "high" | "critical";
+
+export type RiskCategory =
+  | "schedule_conflict"
+  | "overdue_commitment"
+  | "exam_mastery_deficit"
+  | "overloaded_day"
+  | "quiet_hours_breach";
+
+export interface RiskItem {
+  id: string;
+  category: RiskCategory;
+  severity: RiskSeverity;
+  title: string;
+  description: string;
+  suggestedAction?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RiskAssessment {
+  overallScore: RiskSeverity;
+  totalRisks: number;
+  risks: RiskItem[];
+  mitigationSuggestions: string[];
+}
+
+export interface AgendaTimelineItem {
+  time: string;
+  endTime?: string;
+  title: string;
+  type: "calendar_event" | "study_session" | "task_deadline";
+  sourceId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SecretaryBriefing {
+  date: string;
+  timezone: string;
+  agenda: AgendaTimelineItem[];
+  commitmentsDue: Task[];
+  tasksDue: Task[];
+  overdueTasks: Task[];
+  pendingFollowUps: Array<{
+    id: string;
+    taskTitle: string;
+    scheduledAt: string;
+    attemptCount: number;
+  }>;
+  studySessions: StudySession[];
+  upcomingAssessments: Assessment[];
+  activeProjects: Array<{
+    id: string;
+    name: string;
+    openTaskCount: number;
+  }>;
+  riskAssessment: RiskAssessment;
+  weeklyMomentum: {
+    completionRate: number | null;
+    followThroughRate: number | null;
+    summary: string;
+  };
+  conversationalSummary: string;
+}
+
 export type {
   CalendarProviderType,
   CalendarAccountStatus,
@@ -345,4 +496,5 @@ export type {
   CalendarProvider,
 } from "../core/calendar/types";
 export { ReauthRequiredError } from "../core/calendar/types";
+
 

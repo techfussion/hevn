@@ -523,4 +523,87 @@ DROP POLICY IF EXISTS quizzes_isolation ON quizzes;
 CREATE POLICY quizzes_isolation ON quizzes
   USING (user_id = current_setting('app.current_user_id', true)::uuid);
 
+-- ============================================================
+-- P2.5: Durable Job Queue & Notification Deduplication
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS job_queue (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  queue_name       TEXT NOT NULL DEFAULT 'default',
+  job_type         TEXT NOT NULL,
+  user_id          UUID REFERENCES users(id) ON DELETE CASCADE,
+  payload          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'completed', 'failed', 'cancelled')),
+  idempotency_key  TEXT,
+  singleton_key    TEXT,
+  priority         INTEGER NOT NULL DEFAULT 0,
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  max_attempts     INTEGER NOT NULL DEFAULT 5,
+  run_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  locked_until     TIMESTAMPTZ,
+  locked_by        TEXT,
+  last_error       TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at     TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_fetch
+  ON job_queue (queue_name, run_at, priority DESC)
+  WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_locked
+  ON job_queue (locked_until)
+  WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_user_status
+  ON job_queue (user_id, status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_idempotency
+  ON job_queue (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_singleton
+  ON job_queue (queue_name, singleton_key)
+  WHERE status IN ('pending', 'active') AND singleton_key IS NOT NULL;
+
+CREATE TRIGGER trg_job_queue_updated_at
+  BEFORE UPDATE ON job_queue
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Atomic Notification Deduplication Log
+CREATE TABLE IF NOT EXISTS notification_dedup_log (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dedup_key        TEXT NOT NULL,
+  channel          TEXT NOT NULL,
+  category         TEXT NOT NULL DEFAULT 'general',
+  status           TEXT NOT NULL DEFAULT 'delivered' CHECK (status IN ('pending', 'delivered', 'suppressed', 'batched', 'deferred')),
+  payload_summary  TEXT,
+  delivered_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, dedup_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notif_dedup_user_date
+  ON notification_dedup_log (user_id, delivered_at DESC);
+
+-- P2.5 RLS Policies
+ALTER TABLE job_queue ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS job_queue_tenant_isolation ON job_queue;
+CREATE POLICY job_queue_tenant_isolation ON job_queue
+  FOR ALL
+  USING (
+    user_id IS NULL OR user_id = current_setting('app.current_user_id', true)::uuid
+  );
+
+ALTER TABLE notification_dedup_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notif_dedup_tenant_isolation ON notification_dedup_log;
+CREATE POLICY notif_dedup_tenant_isolation ON notification_dedup_log
+  FOR ALL
+  USING (
+    user_id = current_setting('app.current_user_id', true)::uuid
+  );
+
+
 

@@ -650,6 +650,21 @@ export const taskTools: FunctionDeclaration[] = [
       required: [],
     },
   },
+  {
+    name: "get_secretary_briefing",
+    description:
+      "Synthesize a comprehensive, executive secretary briefing for today or a specific date, combining agenda timeline, external calendar events, tasks, commitments, study sessions, upcoming exams, projects, and schedule risk alerts.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        date_iso: {
+          type: Type.STRING,
+          description: "Optional ISO date (YYYY-MM-DD) for the briefing (defaults to today in user's timezone)",
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 

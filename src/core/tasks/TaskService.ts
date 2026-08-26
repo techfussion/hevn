@@ -191,6 +191,10 @@ export class TaskService {
     });
   }
 
+  async listTasks(userId: string, limit = 50): Promise<Task[]> {
+    return this.getUpcomingTasks(userId, limit);
+  }
+
   async getCommitments(userId: string, limit = 10): Promise<Task[]> {
     const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 50);
     return withUserScope(userId, async (client) => {

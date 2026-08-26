@@ -30,6 +30,7 @@ import { QuizService } from "../core/study/QuizService";
 import { FlashcardService } from "../core/study/FlashcardService";
 import { StudyRecommendationService } from "../core/study/StudyRecommendationService";
 import { SyllabusIngestionService } from "../core/study/SyllabusIngestionService";
+import { BriefingService } from "../core/briefing/BriefingService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
@@ -47,6 +48,7 @@ export class ConversationOrchestrator {
   private flashcardService: FlashcardService;
   private studyRecommendationService: StudyRecommendationService;
   private syllabusIngestionService: SyllabusIngestionService;
+  private briefingService: BriefingService;
 
   constructor(
     private gemma: GemmaClient,
@@ -63,7 +65,8 @@ export class ConversationOrchestrator {
     quizService?: QuizService,
     flashcardService?: FlashcardService,
     studyRecommendationService?: StudyRecommendationService,
-    syllabusIngestionService?: SyllabusIngestionService
+    syllabusIngestionService?: SyllabusIngestionService,
+    briefingService?: BriefingService
   ) {
     this.onboardingService = new OnboardingService(this.userService, this.taskService);
     this.followUpService = followUpService || new FollowUpService();
@@ -80,6 +83,15 @@ export class ConversationOrchestrator {
       studyRecommendationService || new StudyRecommendationService(this.courseService);
     this.syllabusIngestionService =
       syllabusIngestionService || new SyllabusIngestionService(this.gemma, this.courseService);
+    this.briefingService =
+      briefingService ||
+      new BriefingService(
+        this.taskService,
+        this.followUpService,
+        this.calendarService,
+        this.courseService,
+        this.insightsService
+      );
   }
 
   getSyllabusIngestionService(): SyllabusIngestionService {
@@ -776,6 +788,15 @@ export class ConversationOrchestrator {
           return {
             summary: `Completed ${insights.completedSessions} of ${insights.scheduledSessions} study sessions (${insights.totalStudyMinutes} total minutes).`,
             data: { success: true, insights },
+          };
+        }
+
+        case "get_secretary_briefing": {
+          const targetDateIso = call.args.date_iso ? String(call.args.date_iso) : undefined;
+          const briefing = await this.briefingService.getDailyBriefing(userId, targetDateIso, userTimezone);
+          return {
+            summary: briefing.conversationalSummary,
+            data: { success: true, briefing },
           };
         }
 
