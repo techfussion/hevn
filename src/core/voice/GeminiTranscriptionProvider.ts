@@ -10,7 +10,10 @@ export class GeminiTranscriptionProvider implements TranscriptionProvider {
   private client: GoogleGenAI;
   private model: string;
 
-  constructor(apiKey: string, model: string = "gemini-2.5-flash") {
+  constructor(
+    apiKey: string,
+    model: string = process.env.GEMINI_TRANSCRIPTION_MODEL || "gemini-2.0-flash"
+  ) {
     if (!apiKey) {
       throw new Error("API key is required for GeminiTranscriptionProvider.");
     }

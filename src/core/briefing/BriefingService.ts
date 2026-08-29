@@ -73,7 +73,7 @@ export class BriefingService {
         if (t.status === "done") continue;
         const dueTime = new Date(t.dueAt).getTime();
 
-        if (dueTime < now.getTime()) {
+        if (dueTime < dayStart.getTime()) {
           overdueTasks.push(t);
         } else if (dueTime >= dayStart.getTime() && dueTime <= dayEnd.getTime()) {
           if (t.taskType === "commitment") {

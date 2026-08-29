@@ -87,6 +87,30 @@ export class CalendarService {
   }
 
   /**
+   * Check if a calendar provider is fully configured with required environment variables.
+   */
+  isProviderConfigured(provider: "google" | "caldav"): { configured: boolean; missing: string[] } {
+    if (provider === "google") {
+      const p = this.providers.get("google") as GoogleCalendarProvider | undefined;
+      if (p && typeof p.isConfigured === "function") {
+        return p.isConfigured();
+      }
+      const missing: string[] = [];
+      if (!process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID.includes("PLACEHOLDER")) {
+        missing.push("GOOGLE_CLIENT_ID");
+      }
+      if (!process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET.includes("PLACEHOLDER")) {
+        missing.push("GOOGLE_CLIENT_SECRET");
+      }
+      if (!process.env.GOOGLE_REDIRECT_URI) {
+        missing.push("GOOGLE_REDIRECT_URI");
+      }
+      return { configured: missing.length === 0, missing };
+    }
+    return { configured: true, missing: [] };
+  }
+
+  /**
    * Generate an authorization/connect URL for the user.
    */
   generateConnectUrl(userId: string, provider: "google" | "caldav"): string {

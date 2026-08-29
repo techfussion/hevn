@@ -27,6 +27,8 @@ import { FlashcardService } from "./core/study/FlashcardService";
 import { StudyRecommendationService } from "./core/study/StudyRecommendationService";
 import { SyllabusIngestionService } from "./core/study/SyllabusIngestionService";
 import { createCalendarOAuthRouter } from "./api/calendarOAuthRouter";
+import { AdminService } from "./core/admin/AdminService";
+import { createAdminRouter } from "./api/adminRouter";
 import { logger } from "./utils/logger";
 
 function requireEnv(name: string): string {
@@ -93,6 +95,12 @@ async function main() {
   );
   registerAdapter(telegramAdapter);
 
+  const adminService = new AdminService(
+    undefined,
+    audioSynthesisService,
+    calendarService
+  );
+
   const app = express();
   app.use(helmet());
   app.disable("x-powered-by");
@@ -101,6 +109,7 @@ async function main() {
   app.get("/health", (_req, res) => res.status(200).json({ status: "ok", bot: botName }));
 
   app.use("/auth", createCalendarOAuthRouter(calendarService));
+  app.use("/api/admin", createAdminRouter(adminService));
 
   app.use(
     "/webhook/telegram",

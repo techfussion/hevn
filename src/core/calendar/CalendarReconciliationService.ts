@@ -132,6 +132,14 @@ export class CalendarReconciliationService {
     } catch (err: unknown) {
       if (err instanceof ReauthRequiredError || (err instanceof Error && err.name === "ReauthRequiredError")) {
         result.reauthRequired = true;
+        const msg = err instanceof Error ? err.message : "Reauthorization required";
+        await this.calendarService.updateAccountStatus(
+          userId,
+          accountId,
+          "reauth_required",
+          "token_revoked",
+          msg
+        ).catch(() => {});
         logger.warn(
           { accountId, provider: err instanceof ReauthRequiredError ? err.provider : "unknown" },
           "Calendar reconciliation requires user re-authentication"

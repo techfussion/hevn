@@ -214,6 +214,7 @@ export class WhatsAppAdapter implements MessagingAdapter {
               type?: string;
               text?: { body?: string };
               audio?: { id?: string; mime_type?: string; voice?: boolean };
+              voice?: { id?: string; mime_type?: string };
               timestamp?: string;
               id?: string;
             }>;
@@ -238,6 +239,20 @@ export class WhatsAppAdapter implements MessagingAdapter {
       };
     }
 
+    // Support native WhatsApp voice notes (message.type === 'voice')
+    if (message.voice?.id) {
+      return {
+        platformUserId: message.from,
+        audio: {
+          mediaId: message.voice.id,
+          mimeType: message.voice.mime_type || "audio/ogg; codecs=opus",
+        },
+        timestamp,
+        updateId: message.id,
+      };
+    }
+
+    // Support uploaded audio media (message.type === 'audio')
     if (message.audio?.id) {
       return {
         platformUserId: message.from,

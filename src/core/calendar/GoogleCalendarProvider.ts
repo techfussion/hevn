@@ -98,6 +98,23 @@ export class GoogleCalendarProvider implements CalendarProvider {
     this.onTokenRefreshed = onTokenRefreshed;
   }
 
+  isConfigured(): { configured: boolean; missing: string[] } {
+    const missing: string[] = [];
+    if (!this.config.clientId || this.config.clientId.includes("PLACEHOLDER")) {
+      missing.push("GOOGLE_CLIENT_ID");
+    }
+    if (!this.config.clientSecret || this.config.clientSecret.includes("PLACEHOLDER")) {
+      missing.push("GOOGLE_CLIENT_SECRET");
+    }
+    if (!this.config.redirectUri) {
+      missing.push("GOOGLE_REDIRECT_URI");
+    }
+    return {
+      configured: missing.length === 0,
+      missing,
+    };
+  }
+
   /**
    * Get valid decrypted access token, automatically refreshing if expired or expiring within 60s.
    * Handles invalid_grant / revoked credentials with ReauthRequiredError.

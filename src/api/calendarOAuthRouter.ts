@@ -8,6 +8,20 @@ export function createCalendarOAuthRouter(calendarService?: CalendarService): Ro
   const service = calendarService || new CalendarService();
 
   /**
+   * Google OAuth Status Endpoint
+   * GET /auth/google/status
+   */
+  router.get("/google/status", (_req: Request, res: Response) => {
+    const status = service.isProviderConfigured("google");
+    return res.status(200).json({
+      provider: "google",
+      configured: status.configured,
+      missingFields: status.missing,
+      redirectUri: process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/auth/google/callback",
+    });
+  });
+
+  /**
    * Google OAuth Callback Endpoint
    * GET /auth/google/callback?code=...&state=...
    */
@@ -20,9 +34,11 @@ export function createCalendarOAuthRouter(calendarService?: CalendarService): Ro
         <!DOCTYPE html>
         <html>
           <head><title>Hevn — Calendar Connection Failed</title></head>
-          <body style="font-family: sans-serif; text-align: center; padding: 40px;">
-            <h2 style="color: #e53e3e;">Connection Cancelled</h2>
-            <p>Google Calendar authorization was cancelled or failed. You may close this window and try again in Hevn.</p>
+          <body style="font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: #f8fafc;">
+            <div style="max-width: 480px; margin: 0 auto; background: #1e293b; padding: 32px; border-radius: 16px;">
+              <h2 style="color: #f87171; margin-top: 0;">Connection Cancelled</h2>
+              <p style="color: #94a3b8;">Google Calendar authorization was cancelled or returned an error (${String(error)}). You may close this window and try again in Hevn.</p>
+            </div>
           </body>
         </html>
       `);

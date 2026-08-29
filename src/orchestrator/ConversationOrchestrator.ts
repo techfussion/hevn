@@ -566,14 +566,22 @@ export class ConversationOrchestrator {
 
         case "connect_calendar_instructions": {
           const provider = (call.args.provider as "google" | "caldav") || "google";
-          const connectUrl = this.calendarService.generateConnectUrl(userId, provider);
-          return {
-            summary:
-              provider === "google"
-                ? `Here is your secure link to connect Google Calendar: ${connectUrl}`
-                : `To connect your CalDAV calendar, please provide your server URL, username, and password.`,
-            data: { success: true, connectUrl, provider },
-          };
+          try {
+            const connectUrl = this.calendarService.generateConnectUrl(userId, provider);
+            return {
+              summary:
+                provider === "google"
+                  ? `Here is your secure link to connect Google Calendar: ${connectUrl}`
+                  : `To connect your CalDAV calendar, please provide your server URL, username, and password.`,
+              data: { success: true, connectUrl, provider },
+            };
+          } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : "Calendar connection unavailable.";
+            return {
+              summary: `Calendar connection is currently unavailable: ${errorMsg}. Please contact your administrator to configure Google OAuth credentials or use CalDAV.`,
+              data: { success: false, error: errorMsg, provider },
+            };
+          }
         }
 
         case "disconnect_calendar": {
