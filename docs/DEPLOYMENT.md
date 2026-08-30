@@ -32,10 +32,11 @@ psql $DATABASE_URL -f src/db/migrations/008_p2_worker_database_permissions.sql
    - `recurring_tasks`: `SELECT, UPDATE`
    - `notification_dedup_log`: `SELECT, INSERT, UPDATE`
    - `calendar_accounts`: `SELECT, UPDATE`
+   - `connected_calendars`: `SELECT, INSERT, UPDATE, DELETE`
    - `calendar_event_links`: `SELECT, INSERT, UPDATE, DELETE`
-   - `calendar_sync_state`: `SELECT, INSERT, UPDATE`
-   - `users`, `user_memories`, `projects`, `courses`, `topics`, `assessments`, `study_sessions`, `quizzes`: `SELECT`
+   - `users`, `user_memories`, `projects`, `courses`, `course_topics`, `assessments`, `study_plans`, `study_sessions`, `quizzes`: `SELECT`
    - `processed_updates`: `SELECT, INSERT`
+   - `conversation_turns`: `SELECT`
 4. Grants `USAGE, SELECT` on all sequences.
 5. Configures explicit worker RLS policies (`CREATE POLICY scheduler_worker_access ON <table> FOR ALL TO scheduler_service USING (true) WITH CHECK (true);`).
 

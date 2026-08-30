@@ -14,28 +14,28 @@ $$;
 -- 2. Schema Usage
 GRANT USAGE ON SCHEMA public TO scheduler_service;
 
--- 3. Exact Table Privileges (Least Privilege)
+-- 3. Exact Table Privileges (Least Privilege on Canonical Tables)
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE job_queue TO scheduler_service;
 GRANT SELECT, INSERT, UPDATE ON TABLE follow_ups TO scheduler_service;
 GRANT SELECT, INSERT, UPDATE ON TABLE tasks TO scheduler_service;
 GRANT SELECT, UPDATE ON TABLE recurring_tasks TO scheduler_service;
 GRANT SELECT, INSERT, UPDATE ON TABLE notification_dedup_log TO scheduler_service;
 GRANT SELECT, UPDATE ON TABLE calendar_accounts TO scheduler_service;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE connected_calendars TO scheduler_service;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_event_links TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE ON TABLE calendar_sync_state TO scheduler_service;
 
 -- Read-only tables needed for notification evaluation, daily briefings, and study mode
 GRANT SELECT ON TABLE users TO scheduler_service;
 GRANT SELECT ON TABLE user_memories TO scheduler_service;
 GRANT SELECT ON TABLE projects TO scheduler_service;
 GRANT SELECT ON TABLE courses TO scheduler_service;
-GRANT SELECT ON TABLE topics TO scheduler_service;
+GRANT SELECT ON TABLE course_topics TO scheduler_service;
 GRANT SELECT ON TABLE assessments TO scheduler_service;
+GRANT SELECT ON TABLE study_plans TO scheduler_service;
 GRANT SELECT ON TABLE study_sessions TO scheduler_service;
 GRANT SELECT ON TABLE quizzes TO scheduler_service;
-GRANT SELECT ON TABLE flashcard_decks TO scheduler_service;
-GRANT SELECT ON TABLE flashcards TO scheduler_service;
 GRANT SELECT, INSERT ON TABLE processed_updates TO scheduler_service;
+GRANT SELECT ON TABLE conversation_turns TO scheduler_service;
 
 -- Sequence permissions for auto-generated IDs where applicable
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO scheduler_service;
@@ -74,15 +74,15 @@ DROP POLICY IF EXISTS scheduler_worker_access_cal_accounts ON calendar_accounts;
 CREATE POLICY scheduler_worker_access_cal_accounts ON calendar_accounts
   FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS scheduler_worker_access_conn_cals ON connected_calendars;
+CREATE POLICY scheduler_worker_access_conn_cals ON connected_calendars
+  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS scheduler_worker_access_cal_events ON calendar_event_links;
 CREATE POLICY scheduler_worker_access_cal_events ON calendar_event_links
   FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS scheduler_worker_access_cal_sync ON calendar_sync_state;
-CREATE POLICY scheduler_worker_access_cal_sync ON calendar_sync_state
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
--- Read-only briefing and domain tables for worker
+-- Read-only briefing, domain, and study mode tables for worker
 DROP POLICY IF EXISTS scheduler_worker_access_users ON users;
 CREATE POLICY scheduler_worker_access_users ON users
   FOR SELECT TO scheduler_service USING (true);
@@ -99,12 +99,16 @@ DROP POLICY IF EXISTS scheduler_worker_access_courses ON courses;
 CREATE POLICY scheduler_worker_access_courses ON courses
   FOR SELECT TO scheduler_service USING (true);
 
-DROP POLICY IF EXISTS scheduler_worker_access_topics ON topics;
-CREATE POLICY scheduler_worker_access_topics ON topics
+DROP POLICY IF EXISTS scheduler_worker_access_course_topics ON course_topics;
+CREATE POLICY scheduler_worker_access_course_topics ON course_topics
   FOR SELECT TO scheduler_service USING (true);
 
 DROP POLICY IF EXISTS scheduler_worker_access_assessments ON assessments;
 CREATE POLICY scheduler_worker_access_assessments ON assessments
+  FOR SELECT TO scheduler_service USING (true);
+
+DROP POLICY IF EXISTS scheduler_worker_access_study_plans ON study_plans;
+CREATE POLICY scheduler_worker_access_study_plans ON study_plans
   FOR SELECT TO scheduler_service USING (true);
 
 DROP POLICY IF EXISTS scheduler_worker_access_study_sessions ON study_sessions;

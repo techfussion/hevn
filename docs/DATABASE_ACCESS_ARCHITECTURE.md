@@ -95,7 +95,7 @@ DDL & Schema Management
 | **Record Notification Outcome**| `NotificationDeduplicationService` | `notification_dedup_log` | `UPDATE` |
 | **Rate Limit / Gap Check** | `NotificationDeduplicationService` | `notification_dedup_log` | `SELECT` |
 | **Calendar Sync Account Sweep**| `CalendarReconciliationService` | `calendar_accounts` | `SELECT` |
-| **Calendar Event Sync** | `CalendarReconciliationService` | `calendar_event_links`, `calendar_sync_state` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+| **Calendar Event Sync** | `CalendarReconciliationService` | `calendar_event_links`, `connected_calendars` | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
 | **User Settings & Channels** | `NotificationPolicyService` / Worker | `users` | `SELECT` |
 | **Daily Briefing Synthesis** | `BriefingService` | `tasks`, `follow_ups`, `calendar_accounts`, `courses`, `study_sessions`, `projects`, `user_memories` | `SELECT` |
 | **Webhook Idempotency** | Webhook Handlers | `processed_updates` | `SELECT`, `INSERT` |
