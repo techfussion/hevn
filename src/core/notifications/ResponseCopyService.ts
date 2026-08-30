@@ -4,6 +4,8 @@
  * Provides deterministic, non-repetitive conversational variation without Math.random().
  */
 
+import { UserIdentityService, type UserIdentityProfile } from "../users/UserIdentityService";
+
 export type CopyCategory =
   | "task_reminder"
   | "task_due"
@@ -23,6 +25,7 @@ export interface TaskReminderContext {
   dueTimeStr: string;
   isUrgent?: boolean;
   attemptCount?: number;
+  userProfile?: UserIdentityProfile;
 }
 
 export interface FollowUpContext {
@@ -31,17 +34,20 @@ export interface FollowUpContext {
   wasSnoozed?: boolean;
   dueTimeStr?: string;
   snoozeDurationMinutes?: number;
+  userProfile?: UserIdentityProfile;
 }
 
 export interface OverdueTaskContext {
   taskTitle: string;
   dueTimeStr?: string;
+  userProfile?: UserIdentityProfile;
 }
 
 export interface StudySessionContext {
   courseName: string;
   topicName?: string;
   startsInMinutes?: number;
+  userProfile?: UserIdentityProfile;
 }
 
 export interface ExamWarningContext {
@@ -49,9 +55,11 @@ export interface ExamWarningContext {
   assessmentTitle: string;
   daysRemaining: number;
   weakTopics?: string[];
+  userProfile?: UserIdentityProfile;
 }
 
 export interface DailyBriefingContext {
+  userProfile?: UserIdentityProfile;
   displayName?: string | null;
   tasksCount: number;
   taskTitles?: string[];
@@ -80,6 +88,8 @@ export class ResponseCopyService {
         `"${c.taskTitle}" is on your schedule for ${c.dueTimeStr}. Let me know if you need more time!`,
       (c: TaskReminderContext) =>
         `Approaching on your schedule: "${c.taskTitle}" at ${c.dueTimeStr}.`,
+      (c: TaskReminderContext) =>
+        `Don't forget — "${c.taskTitle}" is coming up at ${c.dueTimeStr}.`,
     ];
 
     const seed = `${taskId}_${ctx.attemptCount ?? 0}_reminder_${dateSeed || ""}`;
@@ -122,6 +132,8 @@ export class ResponseCopyService {
           `Following up again on "${c.taskTitle}". Do you want to mark it done, snooze it, or drop it?`,
         (c: FollowUpContext) =>
           `I know you had "${c.taskTitle}" open earlier. Did you get a chance to finish it?`,
+        (c: FollowUpContext) =>
+          `Any progress on "${c.taskTitle}"? Just let me know if you need to reschedule.`,
       ];
       const index = this.getDeterministicIndex(`${followUpId}_retry_${ctx.attemptCount}`, retryVariants.length);
       const text = retryVariants[index](ctx);
@@ -154,6 +166,8 @@ export class ResponseCopyService {
         `Looks like "${c.taskTitle}" slipped past its deadline. What would you like to do with it?`,
       (c: OverdueTaskContext) =>
         `"${c.taskTitle}" is still pending after its deadline. Let me know if you want to reschedule it for later today.`,
+      (c: OverdueTaskContext) =>
+        `You didn't get to "${c.taskTitle}" yet — no problem at all. Want to move it to a new time?`,
     ];
 
     const index = this.getDeterministicIndex(`${taskId}_overdue`, variants.length);
@@ -205,23 +219,49 @@ export class ResponseCopyService {
   }
 
   /**
-   * Generates morning agenda daily briefing.
+   * Generates morning agenda daily briefing with natural conversational variation and identity awareness.
    */
   composeMorningBriefing(
     _userId: string,
     ctx: DailyBriefingContext,
-    agendaLines?: string[]
+    agendaLines?: string[],
+    dateSeed?: string
   ): { text: string; voiceText: string } {
-    const nameStr = ctx.displayName ? ` ${ctx.displayName}` : "";
-    let body = "";
+    const profile: UserIdentityProfile = ctx.userProfile || { displayName: ctx.displayName };
+    const name = UserIdentityService.resolveConversationalName(profile);
 
-    if (agendaLines && agendaLines.length > 0) {
-      body = `Here is what is currently on your plate today:\n${agendaLines.join("\n")}\n\nLet me know what you'd like to prioritize!`;
+    const greetingsWithName = [
+      (n: string) => `Morning, ${n}. Here's how your day is shaping up:`,
+      (n: string) => `Good morning, ${n}. Here is your schedule for today:`,
+      (n: string) => `Morning, ${n}! You've got a few things lined up today:`,
+      (n: string) => `Here's your rundown for today, ${n}:`,
+    ];
+
+    const greetingsWithoutName = [
+      () => `Morning! Here's how your day is shaping up:`,
+      () => `Good morning. Here is your schedule for today:`,
+      () => `Here's the rundown for today:`,
+      () => `You've got a few things lined up today:`,
+    ];
+
+    const seed = `${_userId}_morning_${dateSeed || ""}`;
+    let opening = "";
+    if (name) {
+      const idx = this.getDeterministicIndex(seed, greetingsWithName.length);
+      opening = greetingsWithName[idx](name);
     } else {
-      body = `You have a clear schedule today. Tell me what's on your mind and I'll keep track of it!`;
+      const idx = this.getDeterministicIndex(seed, greetingsWithoutName.length);
+      opening = greetingsWithoutName[idx]();
     }
 
-    const text = `Good morning${nameStr}! ☀️\n\n${body}`;
+    let body = "";
+    if (agendaLines && agendaLines.length > 0) {
+      body = `${agendaLines.join("\n")}\n\nLet me know how you'd like to tackle your day!`;
+    } else {
+      body = `Your schedule is wide open today with no commitments pending. Tell me what's on your mind and I'll keep track of it!`;
+    }
+
+    const text = `${opening}\n\n${body}`;
     return { text, voiceText: this.sanitizeForVoice(text) };
   }
 

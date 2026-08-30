@@ -31,6 +31,7 @@ import { FlashcardService } from "../core/study/FlashcardService";
 import { StudyRecommendationService } from "../core/study/StudyRecommendationService";
 import { SyllabusIngestionService } from "../core/study/SyllabusIngestionService";
 import { BriefingService } from "../core/briefing/BriefingService";
+import { UserIdentityService } from "../core/users/UserIdentityService";
 import { logger } from "../utils/logger";
 
 const MAX_HISTORY_TURNS = 6; // cap context; prevents unbounded token growth and cost
@@ -191,7 +192,7 @@ export class ConversationOrchestrator {
 
     const systemPrompt = buildSystemPrompt({
       botName: user.assistantName || user.botPersona || "Hevn",
-      studentName: user.displayName,
+      studentName: UserIdentityService.resolveConversationalName(user),
       persona: user.persona,
       currentIsoDateTime: nowInUserTz,
       timezone: user.timezone,
@@ -486,6 +487,40 @@ export class ConversationOrchestrator {
             String(call.args.bot_persona)
           );
           return { summary: "Registration complete.", data: { success: true } };
+        }
+
+        case "set_user_identity": {
+          const preferredName = call.args.preferred_name !== undefined ? String(call.args.preferred_name || "") : undefined;
+          const rawUsername = call.args.username !== undefined ? String(call.args.username || "") : undefined;
+          const namelessMode = call.args.nameless_mode !== undefined ? Boolean(call.args.nameless_mode) : undefined;
+          const fullName = call.args.full_name !== undefined ? String(call.args.full_name || "") : undefined;
+
+          let normalizedUsername: string | undefined = undefined;
+          if (rawUsername) {
+            const val = UserIdentityService.validateAndNormalizeUsername(rawUsername);
+            if (!val.valid) {
+              return { summary: `Invalid username: ${val.error}`, data: { success: false, error: val.error } };
+            }
+            normalizedUsername = val.normalized;
+          }
+
+          await this.userService.updateUserIdentity(userId, {
+            preferredName: preferredName !== undefined ? (preferredName ? preferredName : null) : undefined,
+            username: normalizedUsername !== undefined ? (normalizedUsername ? normalizedUsername : null) : undefined,
+            namelessMode,
+            fullName: fullName !== undefined ? (fullName ? fullName : null) : undefined,
+          });
+
+          let ack = "Got it! Identity preferences updated.";
+          if (namelessMode) {
+            ack = "Understood — I will not use your name in our messages.";
+          } else if (preferredName) {
+            ack = `Got it! I'll call you ${preferredName}.`;
+          } else if (normalizedUsername) {
+            ack = `Got it! Set your handle to @${normalizedUsername}.`;
+          }
+
+          return { summary: ack, data: { success: true } };
         }
 
         case "set_checkin_time": {

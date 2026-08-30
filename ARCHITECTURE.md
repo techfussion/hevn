@@ -415,6 +415,23 @@ Scheduler Worker (`scheduler_service`)
 4. **Voice Output Sanitization**:
    - Automatically strips markdown formatting, links, bullets, and emojis for smooth, humanlike text-to-speech audio synthesis.
 
+---
+
+## 14. User Conversational Identity System (`UserIdentityService`)
+
+1. **Conversational Name Priority**:
+   - `nameless_mode` (when enabled by user) $\to$ `null` (no name used)
+   - `preferred_name` $\to$ explicit chosen conversational nickname (e.g. "Raj", "Mumin")
+   - `display_name` $\to$ single first word extracted (e.g. "Raji Abdulmumin" $\to$ "Raji")
+   - `username` $\to$ normalized handle without `@`
+   - `full_name` $\to$ first word extracted as fallback
+2. **Anti-Government-Name Etiquette**:
+   - HEVN never addresses users by their full multi-word legal name in casual chat or scheduled notifications.
+   - Names are used sparingly in greetings and briefings rather than prefixed on every turn.
+3. **Controlled Persistence via `set_user_identity`**:
+   - Users can update their identity naturally via chat (*"Call me Raj"*, *"Set my username to @raj"*, *"Don't use my name"*).
+   - Validated server-side with normalized username rules (3-30 characters, alphanumeric/underscores, case-insensitive uniqueness).
+
 
 
 

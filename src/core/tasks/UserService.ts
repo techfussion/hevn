@@ -170,6 +170,47 @@ export class UserService {
     });
   }
 
+  async updateUserIdentity(
+    userId: string,
+    identity: {
+      fullName?: string | null;
+      preferredName?: string | null;
+      username?: string | null;
+      namelessMode?: boolean;
+    }
+  ): Promise<void> {
+    await withUserScope(userId, async (client) => {
+      const updates: string[] = [];
+      const values: unknown[] = [];
+      let idx = 1;
+
+      if (identity.fullName !== undefined) {
+        updates.push(`full_name = $${idx++}`);
+        values.push(identity.fullName ? identity.fullName.slice(0, 100) : null);
+      }
+      if (identity.preferredName !== undefined) {
+        updates.push(`preferred_name = $${idx++}`);
+        values.push(identity.preferredName ? identity.preferredName.slice(0, 50) : null);
+      }
+      if (identity.username !== undefined) {
+        updates.push(`username = $${idx++}`);
+        values.push(identity.username ? identity.username.slice(0, 30) : null);
+      }
+      if (identity.namelessMode !== undefined) {
+        updates.push(`nameless_mode = $${idx++}`);
+        values.push(identity.namelessMode);
+      }
+
+      if (updates.length === 0) return;
+
+      values.push(userId);
+      await client.query(
+        `UPDATE users SET ${updates.join(", ")} WHERE id = $${idx}`,
+        values
+      );
+    });
+  }
+
   async tryAcquireUpdate(updateId: string, platform: "telegram" | "whatsapp"): Promise<boolean> {
     const pool = getPool();
     try {
@@ -202,6 +243,10 @@ function mapRow(row: Record<string, unknown>): User {
     platform: row.platform as "telegram" | "whatsapp",
     platformUserId: row.platform_user_id as string,
     displayName: (row.display_name as string | null) ?? null,
+    fullName: (row.full_name as string | null) ?? null,
+    preferredName: (row.preferred_name as string | null) ?? null,
+    username: (row.username as string | null) ?? null,
+    namelessMode: Boolean(row.nameless_mode),
     timezone: (row.timezone as string) ?? DEFAULT_TIMEZONE,
     onboarded: Boolean(row.onboarded) || onboardingState === "COMPLETED",
     onboardingState,

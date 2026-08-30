@@ -1,8 +1,42 @@
--- Migration 008: P2.5.1 Background Worker Database Permissions & Least-Privilege RLS Policies
--- Grants exact required table privileges and targeted RLS policies for scheduler_service.
--- Normal application traffic continues enforcing tenant isolation via app.current_user_id.
+-- Migration 008: P2.5.1 Background Worker Database Permissions, User Identity & Least-Privilege RLS
+-- Safe, fully idempotent, non-destructive, and resilient for Supabase and PostgreSQL deployments.
 
--- 1. Ensure scheduler_service role exists idempotently
+-- 1. Ensure required extensions
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- 2. User Conversational Identity Enhancements
+ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS nameless_mode BOOLEAN NOT NULL DEFAULT false;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower
+  ON users (LOWER(username))
+  WHERE username IS NOT NULL;
+
+-- 3. Ensure core base tables exist with Row-Level Security explicitly enabled
+CREATE TABLE IF NOT EXISTS conversation_turns (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE conversation_turns ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS processed_updates (
+  id          TEXT PRIMARY KEY,
+  platform    TEXT NOT NULL CHECK (platform IN ('telegram', 'whatsapp')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE processed_updates ENABLE ROW LEVEL SECURITY;
+
+-- Ensure RLS on conversation_turns
+DROP POLICY IF EXISTS conversation_turns_isolation ON conversation_turns;
+CREATE POLICY conversation_turns_isolation ON conversation_turns
+  USING (user_id = current_setting('app.current_user_id', true)::uuid);
+
+-- 4. Ensure scheduler_service role exists idempotently
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'scheduler_service') THEN
@@ -11,110 +45,74 @@ BEGIN
 END
 $$;
 
--- 2. Schema Usage
+-- 5. Schema & Sequence Privileges
 GRANT USAGE ON SCHEMA public TO scheduler_service;
-
--- 3. Exact Table Privileges (Least Privilege on Canonical Tables)
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE job_queue TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE ON TABLE follow_ups TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE ON TABLE tasks TO scheduler_service;
-GRANT SELECT, UPDATE ON TABLE recurring_tasks TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE ON TABLE notification_dedup_log TO scheduler_service;
-GRANT SELECT, UPDATE ON TABLE calendar_accounts TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE connected_calendars TO scheduler_service;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE calendar_event_links TO scheduler_service;
-
--- Read-only tables needed for notification evaluation, daily briefings, and study mode
-GRANT SELECT ON TABLE users TO scheduler_service;
-GRANT SELECT ON TABLE user_memories TO scheduler_service;
-GRANT SELECT ON TABLE projects TO scheduler_service;
-GRANT SELECT ON TABLE courses TO scheduler_service;
-GRANT SELECT ON TABLE course_topics TO scheduler_service;
-GRANT SELECT ON TABLE assessments TO scheduler_service;
-GRANT SELECT ON TABLE study_plans TO scheduler_service;
-GRANT SELECT ON TABLE study_sessions TO scheduler_service;
-GRANT SELECT ON TABLE quizzes TO scheduler_service;
-GRANT SELECT, INSERT ON TABLE processed_updates TO scheduler_service;
-GRANT SELECT ON TABLE conversation_turns TO scheduler_service;
-
--- Sequence permissions for auto-generated IDs where applicable
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO scheduler_service;
 
--- 4. Worker Row-Level Security (RLS) Policies
--- These policies apply strictly TO scheduler_service, allowing the background scheduler
--- to perform cross-user job claiming, follow-ups, and calendar sync without disabling RLS.
+-- Explicitly protect internal scheduler tables from anon client access
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE ALL ON TABLE job_queue FROM anon;
+    REVOKE ALL ON TABLE notification_dedup_log FROM anon;
+    REVOKE ALL ON TABLE follow_ups FROM anon;
+  END IF;
+END
+$$;
 
--- Job Queue
-DROP POLICY IF EXISTS scheduler_worker_access_job_queue ON job_queue;
-CREATE POLICY scheduler_worker_access_job_queue ON job_queue
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
+-- 6. Dynamic & Resilient Least-Privilege Table Grants for scheduler_service
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN (
+        'job_queue', 'follow_ups', 'tasks', 'recurring_tasks',
+        'notification_dedup_log', 'calendar_accounts', 'connected_calendars',
+        'calendar_event_links', 'users', 'user_memories', 'projects',
+        'courses', 'course_topics', 'assessments', 'study_plans',
+        'study_sessions', 'quizzes', 'processed_updates', 'conversation_turns'
+      )
+  LOOP
+    IF r.table_name IN ('job_queue', 'connected_calendars', 'calendar_event_links') THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO scheduler_service', r.table_name);
+    ELSIF r.table_name IN ('follow_ups', 'tasks', 'notification_dedup_log', 'processed_updates') THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE public.%I TO scheduler_service', r.table_name);
+    ELSIF r.table_name IN ('recurring_tasks', 'calendar_accounts', 'users') THEN
+      EXECUTE format('GRANT SELECT, UPDATE ON TABLE public.%I TO scheduler_service', r.table_name);
+    ELSE
+      EXECUTE format('GRANT SELECT ON TABLE public.%I TO scheduler_service', r.table_name);
+    END IF;
+  END LOOP;
+END
+$$;
 
--- Follow-Ups
-DROP POLICY IF EXISTS scheduler_worker_access_follow_ups ON follow_ups;
-CREATE POLICY scheduler_worker_access_follow_ups ON follow_ups
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
+-- 7. Dynamic & Resilient Worker Row-Level Security (RLS) Policies
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN (
+        'job_queue', 'follow_ups', 'tasks', 'recurring_tasks',
+        'notification_dedup_log', 'calendar_accounts', 'connected_calendars',
+        'calendar_event_links', 'users', 'user_memories', 'projects',
+        'courses', 'course_topics', 'assessments', 'study_plans',
+        'study_sessions', 'quizzes', 'conversation_turns', 'processed_updates'
+      )
+  LOOP
+    -- Ensure RLS is active
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', r.table_name);
 
--- Tasks
-DROP POLICY IF EXISTS scheduler_worker_access_tasks ON tasks;
-CREATE POLICY scheduler_worker_access_tasks ON tasks
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
--- Recurring Tasks
-DROP POLICY IF EXISTS scheduler_worker_access_recurring ON recurring_tasks;
-CREATE POLICY scheduler_worker_access_recurring ON recurring_tasks
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
--- Notification Deduplication Log
-DROP POLICY IF EXISTS scheduler_worker_access_dedup ON notification_dedup_log;
-CREATE POLICY scheduler_worker_access_dedup ON notification_dedup_log
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
--- Calendar Integration
-DROP POLICY IF EXISTS scheduler_worker_access_cal_accounts ON calendar_accounts;
-CREATE POLICY scheduler_worker_access_cal_accounts ON calendar_accounts
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_conn_cals ON connected_calendars;
-CREATE POLICY scheduler_worker_access_conn_cals ON connected_calendars
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_cal_events ON calendar_event_links;
-CREATE POLICY scheduler_worker_access_cal_events ON calendar_event_links
-  FOR ALL TO scheduler_service USING (true) WITH CHECK (true);
-
--- Read-only briefing, domain, and study mode tables for worker
-DROP POLICY IF EXISTS scheduler_worker_access_users ON users;
-CREATE POLICY scheduler_worker_access_users ON users
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_memories ON user_memories;
-CREATE POLICY scheduler_worker_access_memories ON user_memories
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_projects ON projects;
-CREATE POLICY scheduler_worker_access_projects ON projects
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_courses ON courses;
-CREATE POLICY scheduler_worker_access_courses ON courses
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_course_topics ON course_topics;
-CREATE POLICY scheduler_worker_access_course_topics ON course_topics
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_assessments ON assessments;
-CREATE POLICY scheduler_worker_access_assessments ON assessments
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_study_plans ON study_plans;
-CREATE POLICY scheduler_worker_access_study_plans ON study_plans
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_study_sessions ON study_sessions;
-CREATE POLICY scheduler_worker_access_study_sessions ON study_sessions
-  FOR SELECT TO scheduler_service USING (true);
-
-DROP POLICY IF EXISTS scheduler_worker_access_quizzes ON quizzes;
-CREATE POLICY scheduler_worker_access_quizzes ON quizzes
-  FOR SELECT TO scheduler_service USING (true);
+    -- Drop existing policy if present and recreate targeted strictly to scheduler_service
+    EXECUTE format('DROP POLICY IF EXISTS scheduler_worker_access_%I ON public.%I', r.table_name, r.table_name);
+    EXECUTE format('CREATE POLICY scheduler_worker_access_%I ON public.%I FOR ALL TO scheduler_service USING (true) WITH CHECK (true)', r.table_name, r.table_name);
+  END LOOP;
+END
+$$;

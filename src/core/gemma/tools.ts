@@ -337,6 +337,33 @@ export const taskTools: FunctionDeclaration[] = [
     },
   },
   {
+    name: "set_user_identity",
+    description:
+      "Update user conversational identity preferences, preferred name, username, or nameless mode " +
+      "(e.g. 'Call me Raj', 'My preferred name is Mumin', 'Set my username to raj', 'Don't use my name').",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        preferred_name: {
+          type: Type.STRING,
+          description: "User's preferred conversational name/nickname (e.g. 'Raj', 'Mumin'). Pass empty string or null to reset.",
+        },
+        username: {
+          type: Type.STRING,
+          description: "User's chosen handle (alphanumeric, 3-30 chars, without @).",
+        },
+        nameless_mode: {
+          type: Type.BOOLEAN,
+          description: "Set to true if user explicitly asks not to be addressed by name in messages.",
+        },
+        full_name: {
+          type: Type.STRING,
+          description: "User's formal/full name for administrative context.",
+        },
+      },
+    },
+  },
+  {
     name: "set_checkin_time",
     description:
       "Change what hour (0-23, in the user's local timezone) the daily morning " +

@@ -20,7 +20,7 @@ const EVENING_HOUR = 20;
 
 async function sendDailyAgenda() {
   const { rows: users } = await getSchedulerPool().query(
-    `SELECT id, platform, platform_user_id, display_name, assistant_name, bot_persona, timezone, preferred_checkin_hour, onboarded, onboarding_state FROM users`
+    `SELECT id, platform, platform_user_id, display_name, full_name, preferred_name, username, nameless_mode, assistant_name, bot_persona, timezone, preferred_checkin_hour, onboarded, onboarding_state FROM users`
   );
 
   const dueNow = users.filter((u) => {
@@ -42,6 +42,13 @@ async function sendDailyAgenda() {
     const { text } = responseCopyService.composeMorningBriefing(
       user.id,
       {
+        userProfile: {
+          preferredName: user.preferred_name,
+          displayName: user.display_name,
+          username: user.username,
+          fullName: user.full_name,
+          namelessMode: Boolean(user.nameless_mode),
+        },
         displayName: user.display_name,
         tasksCount: todayTasks.length,
         taskTitles: todayTasks.map((t) => t.title),

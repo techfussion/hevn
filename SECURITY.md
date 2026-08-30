@@ -78,6 +78,12 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
 * **Targeted Worker RLS Policies**: Table Row-Level Security remains active on all 19 database tables. Controlled policies (`CREATE POLICY scheduler_worker_access ON <table> FOR ALL TO scheduler_service USING (true) WITH CHECK (true);`) grant the worker access strictly for cross-user queue operations, follow-up processing, and calendar reconciliation, while user-facing API routes continue enforcing strict per-tenant isolation (`user_id = current_setting('app.current_user_id')`).
 * **Startup Capability Verification**: The worker runs `DatabaseCapabilityChecker` before entering polling loops, halting cleanly if permissions or migrations are missing to prevent infinite crashing error loops.
 
+### K. User Conversational Identity & Privacy Safeguards (P2.5.1)
+* **Anti-Government-Name Principle**: Full legal/government names are never automatically exposed or repeatedly spoken in casual chat or proactive notifications.
+* **Conversational Name Fallback**: HEVN strictly enforces the priority `nameless_mode` -> `preferred_name` -> `display_name` (first name only) -> `username` -> `first_name` (from `full_name`).
+* **Username Normalization & Validation**: Usernames are validated server-side (3-30 chars, alphanumeric + underscores, case-insensitive index on `LOWER(username)`). Usernames do not replace internal UUID user identifiers.
+* **Nameless Mode Enforcement**: When a user specifies not to use their name, `nameless_mode` prevents any name insertion across all scheduled and on-demand assistant interactions.
+
 ---
 
 ## 3. Vulnerability Reporting

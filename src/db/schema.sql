@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS users (
   platform               TEXT NOT NULL CHECK (platform IN ('telegram', 'whatsapp')),
   platform_user_id       TEXT NOT NULL,
   display_name           TEXT,
+  full_name              TEXT,
+  preferred_name         TEXT,
+  username               TEXT,
+  nameless_mode          BOOLEAN NOT NULL DEFAULT false,
   timezone               TEXT NOT NULL DEFAULT 'UTC',
   onboarded              BOOLEAN NOT NULL DEFAULT false,
   onboarding_state       TEXT NOT NULL DEFAULT 'WELCOME' CHECK (onboarding_state IN ('WELCOME', 'AWAITING_NAME', 'AWAITING_ASSISTANT_NAME', 'AWAITING_PERSONA', 'AWAITING_CHECKIN_TIME', 'COMPLETED')),
@@ -27,6 +31,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (platform, platform_user_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower
+  ON users (LOWER(username))
+  WHERE username IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS projects (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

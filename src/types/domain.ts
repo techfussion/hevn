@@ -143,6 +143,10 @@ export interface User {
   platform: "telegram" | "whatsapp";
   platformUserId: string; // telegram chat id / whatsapp phone number
   displayName: string | null;
+  fullName: string | null;
+  preferredName: string | null;
+  username: string | null;
+  namelessMode: boolean;
   timezone: string; // IANA tz, e.g. "Africa/Lagos" — captured at onboarding
   onboarded: boolean;
   onboardingState: OnboardingState;

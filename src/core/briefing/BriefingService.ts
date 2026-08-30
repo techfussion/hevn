@@ -305,7 +305,7 @@ export class BriefingService {
    */
   formatBriefingForChat(briefing: SecretaryBriefing): string {
     const lines: string[] = [
-      `☀️ **Good day! Here is your Secretary Briefing for ${new Date(briefing.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}:**`,
+      `☀️ **Secretary Briefing for ${new Date(briefing.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}:**`,
       "",
     ];
 

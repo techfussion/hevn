@@ -184,17 +184,19 @@ describe("ResponseCopyService & Canonical Conversational Copy", () => {
       assert.equal(text.includes("Dynamic Programming"), true);
     });
 
-    it("composes morning briefing with agenda lines", () => {
+    it("composes morning briefing with agenda lines and identity awareness", () => {
       const { text } = copyService.composeMorningBriefing(
         "user-1",
         {
-          displayName: "Alex",
+          displayName: "Alex Mercer",
+          userProfile: { preferredName: "Alex" },
           tasksCount: 2,
         },
         ["• Math assignment — 10:00 AM", "• Gym — 5:00 PM"]
       );
 
-      assert.equal(text.includes("Good morning Alex!"), true);
+      assert.equal(text.includes("Alex"), true);
+      assert.equal(text.includes("Alex Mercer"), false); // Never uses full multi-word legal name
       assert.equal(text.includes("Math assignment — 10:00 AM"), true);
       assert.equal(text.includes("Gym — 5:00 PM"), true);
     });
