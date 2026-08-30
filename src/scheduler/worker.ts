@@ -1,62 +1,65 @@
-import "dotenv/config";
-import cron from "node-cron";
+/**
+ * Background Scheduler & Queue Worker Process
+ * Implements:
+ * 1. PostgreSQL FOR UPDATE SKIP LOCKED Durable Job Queue consumption
+ * 2. Database Capability Self-Check at startup (least-privilege role validation)
+ * 3. Canonical Natural Response Composition (ResponseCopyService)
+ * 4. Multi-Provider TTS Failover & Circuit Breaking
+ * 5. Canonical Notification Policy & Anti-Nagging Gap checks
+ * 6. Calendar Reconciliation sweeps
+ */
 
+import cron from "node-cron";
+import { JobQueueService } from "../core/jobs/JobQueueService";
 import { TaskService } from "../core/tasks/TaskService";
 import { FollowUpService } from "../core/followup/FollowUpService";
 import { RecurringTaskService } from "../core/recurring/RecurringTaskService";
-import { CalendarService } from "../core/calendar/CalendarService";
-import { CalendarReconciliationService } from "../core/calendar/CalendarReconciliationService";
-import { JobQueueService } from "../core/jobs/JobQueueService";
 import { NotificationDeduplicationService } from "../core/notifications/NotificationDeduplicationService";
 import { NotificationPolicyService } from "../core/notifications/NotificationPolicyService";
+import { ResponseCopyService } from "../core/notifications/ResponseCopyService";
+import { CalendarService } from "../core/calendar/CalendarService";
+import { CalendarReconciliationService } from "../core/calendar/CalendarReconciliationService";
 import { BriefingService } from "../core/briefing/BriefingService";
-import { CourseService } from "../core/study/CourseService";
-import { InsightsService } from "../core/insights/InsightsService";
-import { getAdapter, initDefaultAdapters } from "../adapters/registry";
-import { getPool } from "../db/pool";
-import { logger } from "../utils/logger";
 import { AudioSynthesisService } from "../core/voice/AudioSynthesisService";
 import { ResponsePolicyService } from "../core/voice/ResponsePolicyService";
 import { ElevenLabsSynthesisProvider } from "../core/voice/providers/ElevenLabsSynthesisProvider";
 import { GoogleCloudTtsProvider } from "../core/voice/providers/GoogleCloudTtsProvider";
+import { DatabaseCapabilityChecker } from "../core/db/DatabaseCapabilityChecker";
+import { getSchedulerPool } from "../db/pool";
+import { getAdapter, initDefaultAdapters } from "../adapters/registry";
+import { logger } from "../utils/logger";
+import type { User, FollowUpPreference, Job } from "../types/domain";
 import type { AudioSynthesisProvider } from "../core/voice/types";
-import type { User, Job, FollowUpPreference } from "../types/domain";
-import "./dailyCheckIns"; // registers daily morning/evening check-in schedules on import
+import "./dailyCheckIns";
 
 initDefaultAdapters();
 
 const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "5", 10);
-const DEFAULT_LEASE_SECONDS = 60;
+const DEFAULT_LEASE_SECONDS = parseInt(process.env.DEFAULT_LEASE_SECONDS || "30", 10);
+
 let isShuttingDown = false;
 let activeJobsCount = 0;
 
-// Initialize Core Services
+// Initialize Core Services with Scheduler Pool
+const jobQueue = new JobQueueService();
 const taskService = new TaskService();
 const followUpService = new FollowUpService();
 const recurringService = new RecurringTaskService();
-const calendarService = new CalendarService();
-const calendarReconciliationService = new CalendarReconciliationService(calendarService);
-const courseService = new CourseService(taskService);
-const insightsService = new InsightsService();
-const briefingService = new BriefingService(
-  taskService,
-  followUpService,
-  calendarService,
-  courseService,
-  insightsService
-);
-
-const jobQueue = new JobQueueService();
 const dedupService = new NotificationDeduplicationService();
 const policyService = new NotificationPolicyService(dedupService);
+const copyService = new ResponseCopyService();
+const calendarService = new CalendarService();
+const calendarReconciliationService = new CalendarReconciliationService(calendarService);
+const briefingService = new BriefingService(taskService, followUpService, calendarService);
+const capabilityChecker = new DatabaseCapabilityChecker();
 
 function createAudioSynthesisService(): AudioSynthesisService | undefined {
   const providers: AudioSynthesisProvider[] = [];
   if (process.env.ELEVENLABS_API_KEY) {
     providers.push(new ElevenLabsSynthesisProvider({ apiKey: process.env.ELEVENLABS_API_KEY }));
   }
-  if (process.env.GEMMA_API_KEY) {
-    providers.push(new GoogleCloudTtsProvider({ apiKey: process.env.GEMMA_API_KEY }));
+  if (process.env.GOOGLE_TTS_API_KEY) {
+    providers.push(new GoogleCloudTtsProvider({ apiKey: process.env.GOOGLE_TTS_API_KEY }));
   }
   if (providers.length === 0) return undefined;
   return new AudioSynthesisService(providers);
@@ -76,7 +79,7 @@ async function handleReminderDispatch(job: Job): Promise<void> {
     throw new Error("Invalid reminder_dispatch job: missing taskId or userId");
   }
 
-  const { rows } = await getPool().query(
+  const { rows } = await getSchedulerPool().query(
     `SELECT t.id, t.title, t.due_at, t.status, t.priority,
             u.id as u_id, u.platform, u.platform_user_id, u.timezone,
             u.quiet_hours_start, u.quiet_hours_end, u.response_mode,
@@ -122,8 +125,17 @@ async function handleReminderDispatch(job: Job): Promise<void> {
     throw new Error(`No messaging adapter registered for platform: ${user.platform}`);
   }
 
-  const dueTime = new Date(row.due_at).toLocaleString();
-  const messageText = `Reminder: "${row.title}" is approaching (due at ${dueTime}). Reply "done" once you've handled it, or "snooze 30" to delay.`;
+  const dueTime = new Date(row.due_at).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: user.timezone || "UTC",
+  });
+
+  const { text: messageText, voiceText } = copyService.composeTaskReminder(taskId, {
+    taskTitle: row.title,
+    dueTimeStr: dueTime,
+    isUrgent: row.priority === "high",
+  });
 
   // 1. Evaluate Notification Policy (quiet hours, rate limits)
   const decision = await policyService.evaluate(user, {
@@ -138,7 +150,6 @@ async function handleReminderDispatch(job: Job): Promise<void> {
 
   if (!decision.eligible) {
     if (decision.action === "defer" && decision.deferredUntil) {
-      // Re-enqueue job for after quiet hours
       await jobQueue.enqueueJob(
         "default",
         "reminder_dispatch",
@@ -167,7 +178,7 @@ async function handleReminderDispatch(job: Job): Promise<void> {
     user,
     {
       userId: user.platformUserId,
-      text: messageText,
+      text: decision.deliveryModality === "voice" ? voiceText : messageText,
     }
   );
 
@@ -182,8 +193,8 @@ async function handleFollowUpDispatch(job: Job): Promise<void> {
     throw new Error("Invalid followup_dispatch job: missing followUpId or userId");
   }
 
-  const { rows } = await getPool().query(
-    `SELECT f.id, f.task_id, f.user_id, f.attempt_count,
+  const { rows } = await getSchedulerPool().query(
+    `SELECT f.id, f.task_id, f.user_id, f.attempt_count, f.last_attempt_at, f.status as follow_up_status,
             t.title, t.status as task_status, t.priority,
             u.id as u_id, u.platform, u.platform_user_id, u.timezone,
             u.quiet_hours_start, u.quiet_hours_end, u.followup_preference,
@@ -231,6 +242,15 @@ async function handleFollowUpDispatch(job: Job): Promise<void> {
   const dedupKey = `fu:${followUpId}:${row.attempt_count}`;
   const now = new Date();
 
+  const attemptNum = Number(row.attempt_count ?? 1);
+  const wasSnoozed = attemptNum > 0 && row.last_attempt_at !== null;
+
+  const { text: messageText, voiceText } = copyService.composeFollowUp(followUpId, {
+    taskTitle: row.title,
+    attemptCount: attemptNum,
+    wasSnoozed,
+  });
+
   // Evaluate Notification Policy
   const decision = await policyService.evaluatePolicy(
     user,
@@ -240,7 +260,7 @@ async function handleFollowUpDispatch(job: Job): Promise<void> {
       priority: row.priority || "medium",
       taskId: row.task_id,
       title: row.title,
-      text: `Checking in: did you finish "${row.title}"?`,
+      text: messageText,
       channelCapabilities: adapter.capabilities,
       incomingModality: "text",
     },
@@ -262,7 +282,6 @@ async function handleFollowUpDispatch(job: Job): Promise<void> {
 
   if (!reserved) return;
 
-  const messageText = `📋 Just checking in: did you complete *${row.title}*?`;
   const buttons = [
     { label: "✅ Done", action: `fu:done:${followUpId}` },
     { label: "⏳ Snooze 1h", action: `fu:snooze:${followUpId}` },
@@ -274,7 +293,7 @@ async function handleFollowUpDispatch(job: Job): Promise<void> {
     user,
     {
       userId: user.platformUserId,
-      text: messageText,
+      text: decision.deliveryModality === "voice" ? voiceText : messageText,
       buttons,
     }
   );
@@ -287,7 +306,7 @@ async function handleRecurringTaskAdvance(job: Job): Promise<void> {
   const recurringTaskId = job.payload?.recurringTaskId as string;
   if (!recurringTaskId) return;
 
-  const { rows } = await getPool().query(
+  const { rows } = await getSchedulerPool().query(
     `SELECT * FROM recurring_tasks WHERE id = $1 AND status = 'active'`,
     [recurringTaskId]
   );
@@ -390,7 +409,7 @@ async function pollAndProcessJobs(): Promise<void> {
     if (jobs.length === 0) return;
 
     activeJobsCount += jobs.length;
-    const promises = jobs.map((job) =>
+    const promises = jobs.map((job: Job) =>
       processJob(job).finally(() => {
         activeJobsCount = Math.max(0, activeJobsCount - 1);
       })
@@ -454,7 +473,7 @@ async function enqueueDueDomainWork(): Promise<void> {
     }
 
     // 4. Enqueue active calendar accounts for sync reconciliation
-    const { rows: calAccounts } = await getPool().query(
+    const { rows: calAccounts } = await getSchedulerPool().query(
       `SELECT id, user_id FROM calendar_accounts
        WHERE status = 'active'
          AND (last_sync_at IS NULL OR last_sync_at < now() - INTERVAL '15 minutes')
@@ -478,23 +497,40 @@ async function enqueueDueDomainWork(): Promise<void> {
 }
 
 // -------------------------------------------------------------
-// Periodic Timers & Crash Recovery
+// Startup & Capability Self-Check
 // -------------------------------------------------------------
 
-// Enqueue domain work every 30 seconds
-cron.schedule("*/30 * * * * *", enqueueDueDomainWork);
+let pollInterval: NodeJS.Timeout | null = null;
 
-// Continuous job queue polling loop (every 2 seconds)
-const pollInterval = setInterval(pollAndProcessJobs, 2000);
-
-// Recover stale crashed worker leases every 60 seconds
-cron.schedule("*/60 * * * * *", async () => {
+async function startWorker() {
   try {
-    await jobQueue.recoverStaleJobs("default");
+    // 1. Assert worker database capabilities
+    await capabilityChecker.assertCapabilitiesOrHalt();
+
+    // 2. Enqueue domain work every 30 seconds
+    cron.schedule("*/30 * * * * *", enqueueDueDomainWork);
+
+    // 3. Continuous job queue polling loop (every 2 seconds)
+    pollInterval = setInterval(pollAndProcessJobs, 2000);
+
+    // 4. Recover stale crashed worker leases every 60 seconds
+    cron.schedule("*/60 * * * * *", async () => {
+      try {
+        await jobQueue.recoverStaleJobs("default");
+      } catch (err) {
+        logger.warn({ err }, "Stale job recovery run failed");
+      }
+    });
+
+    logger.info(
+      { concurrency: WORKER_CONCURRENCY, leaseSeconds: DEFAULT_LEASE_SECONDS },
+      "Hevn P2.5.1 Durable Worker started (PostgreSQL SKIP LOCKED Job Queue, ResponseCopyService & DatabaseCapabilityChecker Active)"
+    );
   } catch (err) {
-    logger.warn({ err }, "Stale job recovery run failed");
+    logger.fatal({ err }, "Worker failed to initialize — exiting");
+    process.exit(1);
   }
-});
+}
 
 // -------------------------------------------------------------
 // Graceful Shutdown
@@ -503,7 +539,7 @@ cron.schedule("*/60 * * * * *", async () => {
 async function gracefulShutdown(signal: string) {
   logger.info({ signal }, "Received shutdown signal — initiating graceful worker shutdown");
   isShuttingDown = true;
-  clearInterval(pollInterval);
+  if (pollInterval) clearInterval(pollInterval);
 
   const shutdownTimeout = setTimeout(() => {
     logger.error("Graceful shutdown timeout exceeded — forcing exit");
@@ -523,7 +559,5 @@ async function gracefulShutdown(signal: string) {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-logger.info(
-  { concurrency: WORKER_CONCURRENCY, leaseSeconds: DEFAULT_LEASE_SECONDS },
-  "Hevn P2.5 Durable Worker started (PostgreSQL SKIP LOCKED Job Queue, Multi-Provider TTS Circuit Breaker & Notification Policy Engine)"
-);
+// Boot worker
+startWorker();

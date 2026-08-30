@@ -1,8 +1,7 @@
 import { getSchedulerPool } from "../../db/pool";
-import { logger } from "../../utils/logger";
-import type { JobQueueService } from "../jobs/JobQueueService";
-import type { AudioSynthesisService } from "../voice/AudioSynthesisService";
-import type { CalendarService } from "../calendar/CalendarService";
+import { JobQueueService } from "../jobs/JobQueueService";
+import { AudioSynthesisService } from "../voice/AudioSynthesisService";
+import { CalendarService } from "../calendar/CalendarService";
 
 export interface AdminDashboardMetrics {
   users: {
@@ -14,8 +13,8 @@ export interface AdminDashboardMetrics {
     wau: number;
     mau: number;
     onboardedRate: number;
-    byPlatform: { telegram: number; whatsapp: number };
-    byPersona: { student: number; executive_assistant: number; professional: number };
+    byPlatform: Record<string, number>;
+    byPersona: Record<string, number>;
   };
   engagement: {
     totalTasks: number;
@@ -27,14 +26,14 @@ export interface AdminDashboardMetrics {
     totalMemories: number;
     totalStudySessions: number;
     completedQuizzes: number;
-    averageQuizScore: number;
-    messagesProcessed: number;
+    averageQuizScore?: number;
+    messagesProcessed?: number;
   };
   timestamp: string;
 }
 
 export interface AdminSystemHealth {
-  status: "healthy" | "degraded" | "failing";
+  status: "healthy" | "degraded" | "unhealthy";
   database: {
     connected: boolean;
     latencyMs: number;
@@ -56,7 +55,7 @@ export interface AdminSystemHealth {
       reauthRequiredAccounts: number;
     };
     voiceSynthesis: {
-      providers: Array<{ name: string; state: string; isHealthy: boolean }>;
+      providers?: Array<{ name: string; state: string; isHealthy: boolean }>;
     };
   };
   timestamp: string;
@@ -66,7 +65,9 @@ export interface AdminUserSummary {
   id: string;
   platform: string;
   displayName: string | null;
-  persona: string;
+  assistantName: string | null;
+  botPersona: string | null;
+  timezone: string;
   plan: string;
   onboarded: boolean;
   responseMode: string;
@@ -79,9 +80,9 @@ export interface AdminUserSummary {
 
 export class AdminService {
   constructor(
-    private jobQueueService?: JobQueueService,
+    _jobQueueService?: JobQueueService,
     private audioSynthesisService?: AudioSynthesisService,
-    private calendarService?: CalendarService
+    _calendarService?: CalendarService
   ) {}
 
   /**
@@ -236,7 +237,11 @@ export class AdminService {
     const cRow = calStatsRes.rows[0] || {};
 
     const voiceHealth = this.audioSynthesisService
-      ? this.audioSynthesisService.getProviderHealth()
+      ? this.audioSynthesisService.getProviderHealth().map((p) => ({
+          name: p.providerName,
+          state: p.circuitState,
+          isHealthy: p.circuitState === "CLOSED",
+        }))
       : [];
 
     const isHealthy = dbConnected && (jRow.dead_letter || 0) < 50;

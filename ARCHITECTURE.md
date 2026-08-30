@@ -379,6 +379,43 @@ Academic Syllabus Ingestion & Parsing      Active Study Tools Execution
    - Evaluates study session adherence rate, quiz accuracy %, and weakest/strongest topics adhering to the null/empty-data philosophy.
    - Generates prioritized topic recommendations weighted by upcoming assessment urgency and mastery deficit.
 
+---
+
+## 12. Background Worker Database Access & Security Architecture (P2.5.1)
+
+```text
+User Webhooks / API
+  └── withUserScope(userId) -> SET LOCAL app.current_user_id -> RLS Tenant Isolation
+
+Scheduler Worker (`scheduler_service`)
+  └── getSchedulerPool() -> Table Grants (SELECT/INSERT/UPDATE) -> Targeted Worker RLS Policies
+```
+
+1. **Role Separation**:
+   - Application requests execute inside `withUserScope(userId)` enforcing `user_id = current_setting('app.current_user_id', true)::uuid`.
+   - The queue worker connects via `SCHEDULER_DATABASE_URL` using role `scheduler_service` without superuser or DDL privileges.
+2. **Targeted Worker RLS Policies**:
+   - Tables (`job_queue`, `follow_ups`, `tasks`, `recurring_tasks`, `notification_dedup_log`, `calendar_accounts`, etc.) maintain RLS active for all roles.
+   - Explicit policies `FOR ALL TO scheduler_service USING (true) WITH CHECK (true)` enable trusted system-level queue processing and follow-up dispatch across tenants.
+3. **Database Capability Checker (`DatabaseCapabilityChecker`)**:
+   - Non-destructive startup verification checks role identity and table operations (`job_queue`, `follow_ups`, `tasks`, `notification_dedup_log`, `users`), failing fast if permissions or migrations are missing.
+
+---
+
+## 13. Canonical Conversational Presentation Layer (`ResponseCopyService`)
+
+1. **Decoupled Business Logic & Presentation**:
+   - Domain services (`FollowUpService`, `TaskService`, `BriefingService`) decide *when* and *what* to communicate deterministically.
+   - `ResponseCopyService` decides *how* to phrase the communication naturally.
+2. **Deterministic Variation**:
+   - Uses stable hashing (`hash(entityId + attemptCount + category + dateSeed) % variants.length`) instead of `Math.random()`.
+   - Never begins with repetitive `"Reminder:"` or `"Checking in:"` prefixes.
+3. **Context & History Awareness**:
+   - Differentiates initial follow-ups, retry attempts, and post-snooze reminders.
+4. **Voice Output Sanitization**:
+   - Automatically strips markdown formatting, links, bullets, and emojis for smooth, humanlike text-to-speech audio synthesis.
+
+
 
 
 

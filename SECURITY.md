@@ -73,6 +73,11 @@ Hevn is engineered with defense-in-depth principles across the entire request, L
   * Only the active question and options are delivered to the user; future questions and correct answer keys are never sent in conversation responses prior to submission and evaluation.
   * Topic mastery calculation is deterministic and bounded strictly between 0 and 100 at the application service layer.
 
+### J. Background Worker Database Access & Role Isolation (P2.5.1)
+* **Least-Privilege Role Isolation**: Background workers connect under the dedicated PostgreSQL role `scheduler_service`. The role is unprivileged, has zero superuser or DDL permissions, and cannot create or alter tables.
+* **Targeted Worker RLS Policies**: Table Row-Level Security remains active on all 19 database tables. Controlled policies (`CREATE POLICY scheduler_worker_access ON <table> FOR ALL TO scheduler_service USING (true) WITH CHECK (true);`) grant the worker access strictly for cross-user queue operations, follow-up processing, and calendar reconciliation, while user-facing API routes continue enforcing strict per-tenant isolation (`user_id = current_setting('app.current_user_id')`).
+* **Startup Capability Verification**: The worker runs `DatabaseCapabilityChecker` before entering polling loops, halting cleanly if permissions or migrations are missing to prevent infinite crashing error loops.
+
 ---
 
 ## 3. Vulnerability Reporting
